@@ -1,0 +1,50 @@
+name: Build and test
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build from the lock file and run the image suite
+        id: test
+        env:
+          BUILDX_NO_DEFAULT_ATTESTATIONS: '1'
+        # Explicit bash uses pipefail, so tee cannot hide a build or test failure.
+        run: python3 scripts/build_and_test.py 2>&1 | tee "$RUNNER_TEMP/build-and-test.log"
+
+      - name: Report build and test results
+        if: ${{ always() && steps.test.outcome != 'skipped' }}
+        env:
+          ARCH: ${{ matrix.arch }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          {
+            printf '## Image tests (%s): %s\n\n' "$ARCH" "$TEST_OUTCOME"
+            printf 'Final build and test output, including suite warnings (last 60 KB). Full output is in the job log.\n\n'
+            printf '~~~~text\n'
+            tail -c 60000 "$RUNNER_TEMP/build-and-test.log"
+            printf '\n~~~~\n'
+          } >> "$GITHUB_STEP_SUMMARY"
