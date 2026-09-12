@@ -4,8 +4,9 @@ Custom [n8n](https://n8n.io/) image bundled with [yt-dlp](https://github.com/yt-
 
 ## Status
 
-The custom image can be built and tested locally. Automatic upstream tracking
-and publishing are planned separately.
+The custom image can be built and tested locally and on pull requests, natively
+on amd64 and arm64. Automatic upstream tracking and publishing are planned
+separately.
 
 ## Build and test locally
 
@@ -79,5 +80,28 @@ The seed was resolved from upstream on 2026-09-12:
   Its multi-architecture digest was resolved from the registry.
 
 All three upstream image indexes were checked to include linux/amd64 and
-linux/arm64. The local acceptance run for this change uses amd64; native arm64
-execution belongs to the later CI work.
+linux/arm64.
+
+## Pull-request checks
+
+Every pull request runs `python3 scripts/build_and_test.py` on native
+`ubuntu-24.04` (amd64) and `ubuntu-24.04-arm` (arm64) GitHub-hosted runners,
+without QEMU. Each job builds its own custom image from the committed lock file
+and runs the same acceptance suite as the local command. Both architectures
+finish even if one fails; a blocking test failure fails its job.
+
+Each job copies the final 60 KB of build and test output, including suite
+warnings, into the run summary even when a test fails. The full output remains
+in the job log. Warning-only tests must report their warning and return success
+so they do not mask blocking failures or fail the job themselves.
+The YouTube download test is tracked separately in
+[issue #5](https://github.com/aliyusufergin/n8n-custom-ytdlp/issues/5); it is not
+yet part of the suite.
+
+The [Image workflow](.github/workflows/image.yml) calls the
+[reusable build-and-test workflow](.github/workflows/build-and-test.yml), which
+can also be called by the future publishing pipeline. Pull-request checks need
+no repository secrets, use only `contents: read`, and disable persisted checkout
+credentials. They do not log in to registries, push images, attest, commit, or
+open issues. Buildx's default provenance attestations are disabled for these
+checks. The checkout action is pinned to a full commit SHA.
