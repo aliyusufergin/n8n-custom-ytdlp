@@ -16,7 +16,7 @@
     "image_digest": "sha256:54e55b0cb8f672870fc38ceb2e6c411855cb3b39c505f5f3b2505ee01ed5f2b7"
   },
   "published": {
-    "build_tag": null,
-    "image_digest": null
+    "build_tag": "2.38.7-20260913-1644",
+    "image_digest": "sha256:7250d3c0b9d8cfed69dcc3b0dd231087cef80a36c84a2148dd555dc248acdef9"
   }
 }
