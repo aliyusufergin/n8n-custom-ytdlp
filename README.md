@@ -23,7 +23,13 @@ library image acceptance suite. The build needs network access to Docker Hub and
 the pinned GitHub release. Blocking image tests run without external network access;
 the advisory YouTube test uses the network and reports failures as warnings.
 Readiness is probed over HTTP inside a temporary container, without publishing
-a host port. Test containers are removed after use.
+a host port. Test containers and named volumes are removed after use.
+
+The suite compares the custom image's user, working directory, entrypoint,
+command, exposed ports and environment with the locked upstream n8n image.
+It checks that Execute Command is unavailable with default settings, that
+yt-dlp running as `node` detects the image's Node.js, ffmpeg and ffprobe, and
+that `node` can write to a fresh named volume at `/home/node/.n8n-files`.
 
 To test an already loaded candidate, or run one test while developing:
 
