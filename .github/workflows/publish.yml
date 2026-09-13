@@ -86,8 +86,62 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  commit-lock:
+  verify-published:
     needs: publish
+    name: Verify published image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out the image acceptance suite
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the verified published lock
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: published-lock
+          path: ${{ runner.temp }}/result
+      - name: Install the registry client
+        uses: regclient/actions/regctl-installer@1b705e32d40851370799ea5814e83d0a5f6a70dc # v0.1.0
+        with:
+          release: v0.11.6
+      - name: Anonymously pull, verify tags, and run the image suite
+        env:
+          ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from publish import CUSTOM, RUNNERS, verify_remote
+          lock_path = Path(os.environ['RUNNER_TEMP']) / 'result/published.lock.json'
+          lock = json.loads(lock_path.read_text())
+          major, minor, patch = lock['n8n']['version'].split('.')
+          tags = [major, f'{major}.{minor}', f'{major}.{minor}.{patch}', lock['published']['build_tag']]
+          for tag in tags:
+              verify_remote(f'{CUSTOM}:{tag}', lock['published']['image_digest'])
+              verify_remote(f'{RUNNERS}:{tag}', lock['n8n']['runners_digest'])
+          image = f'{CUSTOM}:{major}'
+          for reference in (image, f'n8nio/n8n@{lock["n8n"]["image_digest"]}'):
+              subprocess.run(['docker', 'pull', '--platform', f'linux/{os.environ["ARCH"]}', reference], check=True)
+          subprocess.run([sys.executable, 'tests/test_image.py', image, str(lock_path),
+                          '--build-tag', lock['published']['build_tag']], check=True)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'Published {image} passed all image tests on {os.environ["ARCH"]}.\n\n')
+              summary.write(f'All custom and runners tags match the published lock: {tags}\n')
+          PY
+
+  commit-lock:
+    needs: [publish, verify-published]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

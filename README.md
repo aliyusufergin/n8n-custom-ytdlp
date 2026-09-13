@@ -201,6 +201,9 @@ suite with the plan's exact build tag. Only successful jobs upload candidates.
 The publishing job checks the archives against their test receipts and the
 attestation subjects, copies them without rebuilding, and creates a combined OCI
 image index. It reads the manifests back to verify their digests before tagging.
+Two further native jobs anonymously pull the published floating tag, run the
+image suite on amd64 and arm64, and check all custom and runners tag digests.
+The lock commit waits for both jobs to pass.
 
 Both `aliyusufergin/n8n-ytdlp` and `aliyusufergin/n8n-ytdlp-runners` receive the
 plan's `X`, `X.Y`, `X.Y.Z` floating tags and `X.Y.Z-YYYYMMDD-HHMM` build tag.
