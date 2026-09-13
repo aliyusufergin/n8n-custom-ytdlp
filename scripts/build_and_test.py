@@ -15,6 +15,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lock", type=Path, default=ROOT / "build-inputs.lock.json")
     parser.add_argument("--image", default="n8n-ytdlp:local")
+    parser.add_argument("--youtube-network", choices=("bridge", "none"), default="bridge",
+                        help="Use none to reproduce a warning-only YouTube network failure")
     parser.add_argument("tests", nargs="*", help="Optional unittest test names")
     args = parser.parse_args()
     lock = json.loads(args.lock.read_text())
@@ -51,7 +53,8 @@ def main() -> None:
     subprocess.run([*command, str(ROOT)], check=True)
     subprocess.run(
         [sys.executable, str(ROOT / "tests/test_image.py"), args.image,
-         str(args.lock.resolve()), *args.tests], check=True,
+         str(args.lock.resolve()), "--youtube-network", args.youtube_network,
+         *args.tests], check=True,
     )
 
 

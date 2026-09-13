@@ -1,0 +1,42 @@
+{
+  "id": "media-acceptance",
+  "name": "Offline media acceptance",
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "nodes": [
+    {
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "generate",
+      "name": "Generate media",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [240, 0],
+      "parameters": {
+        "command": "set -eu\nid -un\nyt-dlp --version\nffmpeg -hide_banner -loglevel error -nostdin -f lavfi -i sine=frequency=440:sample_rate=8000 -t 1 -c:a pcm_s16le /home/node/.n8n-files/workflow.wav"
+      }
+    },
+    {
+      "id": "read",
+      "name": "Read media",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [480, 0],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "/home/node/.n8n-files/workflow.wav",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Start": {"main": [[{"node": "Generate media", "type": "main", "index": 0}]]},
+    "Generate media": {"main": [[{"node": "Read media", "type": "main", "index": 0}]]}
+  }
+}

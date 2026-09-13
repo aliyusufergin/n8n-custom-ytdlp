@@ -5,14 +5,19 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
+import sys
 import time
 import unittest
 import uuid
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class ImageTests(unittest.TestCase):
     image: str
     lock: dict
+    youtube_network = "bridge"
 
     def image_config(self, image: str) -> dict:
         return json.loads(subprocess.check_output(
@@ -66,6 +71,28 @@ class ImageTests(unittest.TestCase):
     def test_system_yt_dlp_config(self):
         self.assertEqual(self.command("cat", "/etc/yt-dlp.conf"), "--js-runtimes node")
 
+    def test_offline_ffmpeg(self):
+        result = json.loads(self.command("sh", "-ec", """
+            cd /home/node/.n8n-files
+            ffmpeg -hide_banner -loglevel error -nostdin -f lavfi \
+                -i testsrc2=size=96x64:rate=10 -t 2 -an -c:v mpeg4 video.mp4
+            ffmpeg -hide_banner -loglevel error -nostdin -f lavfi \
+                -i sine=frequency=440:sample_rate=16000 -t 2 -vn -c:a pcm_s16le audio.wav
+            ffmpeg -hide_banner -loglevel error -nostdin -i video.mp4 -i audio.wav \
+                -map 0:v:0 -map 1:a:0 -c copy merged.mkv
+            ffmpeg -hide_banner -loglevel error -nostdin -i merged.mkv \
+                -map 0:v:0 -map 0:a:0 -c:v ffv1 -c:a flac converted.mkv
+            ffprobe -v error -show_streams -show_format -of json converted.mkv
+        """))
+        streams = {stream["codec_type"]: stream for stream in result["streams"]}
+        self.assertEqual(len(result["streams"]), 2)
+        self.assertEqual(set(streams), {"video", "audio"})
+        self.assertEqual(streams["video"]["codec_name"], "ffv1")
+        self.assertEqual((streams["video"]["width"], streams["video"]["height"]), (96, 64))
+        self.assertEqual(streams["audio"]["codec_name"], "flac")
+        self.assertEqual(streams["audio"]["sample_rate"], "16000")
+        self.assertAlmostEqual(float(result["format"]["duration"]), 2, delta=0.15)
+
     def test_n8n_files_folder(self):
         details = self.command("node", "-e", """
             const fs = require('node:fs');
@@ -77,6 +104,84 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(json.loads(details), {
             "directory": True, "uid": 1000, "gid": 1000, "entries": [],
         })
+
+    def test_execute_command_workflow(self):
+        compose = json.loads(subprocess.check_output(
+            ["docker", "compose", "-f", str(ROOT / "examples/compose.yaml"),
+             "config", "--format", "json"], text=True, timeout=30,
+        ))
+        excluded = compose["services"]["n8n"]["environment"]["NODES_EXCLUDE"]
+        self.assertEqual(json.loads(excluded), ["n8n-nodes-base.localFileTrigger"])
+        name = "n8n-ytdlp-workflow-" + uuid.uuid4().hex
+        self.addCleanup(subprocess.run, ["docker", "rm", "--force", "--volumes", name],
+                        check=True, capture_output=True, text=True, timeout=30)
+        subprocess.run(
+            ["docker", "run", "--detach", "--name", name, "--network", "none",
+             "--env", f"NODES_EXCLUDE={excluded}",
+             "--mount", f"type=bind,src={ROOT / 'tests/fixtures'},dst=/fixtures,readonly",
+             "--entrypoint", "sleep", self.image, "600"],
+            check=True, capture_output=True, text=True, timeout=30,
+        )
+        imported = subprocess.run(
+            ["docker", "exec", name, "n8n", "import:workflow",
+             "--input=/fixtures/media-workflow.json"],
+            capture_output=True, text=True, timeout=120,
+        )
+        self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
+        executed = subprocess.run(
+            ["docker", "exec", name, "n8n", "execute", "--id=media-acceptance",
+             "--rawOutput"], capture_output=True, text=True, timeout=120,
+        )
+        self.assertEqual(executed.returncode, 0, executed.stdout + executed.stderr)
+        # n8n prints startup diagnostics before its pretty-printed raw JSON result.
+        start = executed.stdout.find("{\n")
+        self.assertGreaterEqual(start, 0, executed.stdout)
+        result, _ = json.JSONDecoder().raw_decode(executed.stdout[start:])
+        self.assertEqual(result["status"], "success", result)
+        nodes = result["data"]["resultData"]["runData"]
+        command = nodes["Generate media"][0]["data"]["main"][0][0]["json"]
+        self.assertEqual(command["exitCode"], 0)
+        self.assertEqual(command["stdout"].splitlines(),
+                         ["node", self.lock["yt_dlp"]["tag"]])
+        read = nodes["Read media"][0]["data"]["main"][0][0]["binary"]["data"]
+        self.assertEqual(read["fileName"], "workflow.wav")
+        self.assertEqual(read["fileExtension"], "wav")
+        self.assertGreater(read["bytes"], 16000)
+        self.assertTrue(read["data"])
+
+    def test_youtube_download(self):
+        name = "n8n-ytdlp-youtube-" + uuid.uuid4().hex
+        try:
+            try:
+                downloaded = subprocess.run(
+                    ["docker", "run", "--rm", "--name", name,
+                     "--network", self.youtube_network, "--entrypoint", "sh",
+                     self.image, "-ec", """
+                        cd /home/node/.n8n-files
+                        yt-dlp --verbose --no-playlist --no-progress \
+                            --socket-timeout 10 --retries 0 --extractor-retries 0 \
+                            --fragment-retries 0 -f 'worstvideo+worstaudio' \
+                            --merge-output-format mkv -o 'youtube.%(ext)s' \
+                            'https://www.youtube.com/watch?v=jNQXAC9IVRw' >&2
+                        ffprobe -v error -show_streams -show_format -of json youtube.mkv
+                     """], capture_output=True, text=True, timeout=180,
+                )
+                self.assertEqual(downloaded.returncode, 0,
+                                 (downloaded.stdout + downloaded.stderr)[-6000:])
+                media = json.loads(downloaded.stdout)
+                self.assertEqual(len(media["streams"]), 2)
+                self.assertEqual({stream["codec_type"] for stream in media["streams"]},
+                                 {"video", "audio"})
+                self.assertGreater(float(media["format"]["duration"]), 0)
+                print("YouTube download: separate video and audio merged successfully.",
+                      file=sys.stderr)
+            finally:
+                # docker run --rm cleans up normally; also remove it after a timeout.
+                subprocess.run(["docker", "rm", "--force", "--volumes", name],
+                               capture_output=True, text=True, timeout=30)
+        except Exception as error:
+            # This entire external-service probe, including timeouts/cleanup, is advisory.
+            print(f"WARNING: YouTube download failed (non-blocking): {error}", file=sys.stderr)
 
     def test_build_labels(self):
         labels = self.image_config(self.image)["Labels"]
@@ -145,7 +250,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", help="Candidate image already loaded in Docker")
     parser.add_argument("lock", type=Path, help="JSON build inputs for this image")
+    parser.add_argument("--youtube-network", choices=("bridge", "none"), default="bridge",
+                        help="Use none to reproduce a warning-only YouTube network failure")
     args, tests = parser.parse_known_args()
     ImageTests.image = args.image
     ImageTests.lock = json.loads(args.lock.read_text())
+    ImageTests.youtube_network = args.youtube_network
     unittest.main(argv=[__file__, *tests], verbosity=2)

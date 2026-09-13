@@ -35,14 +35,27 @@ jobs:
         # Explicit bash uses pipefail, so tee cannot hide a build or test failure.
         run: python3 scripts/build_and_test.py 2>&1 | tee "$RUNNER_TEMP/build-and-test.log"
 
+      - name: Verify YouTube failure is warning-only
+        id: youtube-warning
+        # Exercise a real network failure even if the live YouTube probe succeeded.
+        # pipefail checks the suite's exit status; grep checks that it emitted a warning.
+        run: |
+          python3 tests/test_image.py n8n-ytdlp:local build-inputs.lock.json \
+            --youtube-network none ImageTests.test_youtube_download \
+            2>&1 | tee "$RUNNER_TEMP/youtube-warning.log" \
+            | tee -a "$RUNNER_TEMP/build-and-test.log"
+          grep -F 'WARNING: YouTube download failed (non-blocking):' "$RUNNER_TEMP/youtube-warning.log"
+
       - name: Report build and test results
         if: ${{ always() && steps.test.outcome != 'skipped' }}
         env:
           ARCH: ${{ matrix.arch }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
+          WARNING_OUTCOME: ${{ steps.youtube-warning.outcome }}
         run: |
           {
             printf '## Image tests (%s): %s\n\n' "$ARCH" "$TEST_OUTCOME"
+            printf 'YouTube warning-only verification: %s\n\n' "$WARNING_OUTCOME"
             printf 'Final build and test output, including suite warnings (last 60 KB). Full output is in the job log.\n\n'
             printf '~~~~text\n'
             tail -c 60000 "$RUNNER_TEMP/build-and-test.log"
