@@ -10,7 +10,7 @@ separately.
 
 ## Build and test locally
 
-Requires Python 3.10+ and Docker with Buildx and a running Linux Docker daemon.
+Requires Python 3.10+ and Docker with Buildx, Compose v2+ and a running Linux Docker daemon.
 From this checkout, run:
 
 ```sh
@@ -20,7 +20,8 @@ python3 scripts/build_and_test.py
 This builds `n8n-ytdlp:local` for the Docker host's architecture (amd64 or arm64)
 from [build-inputs.lock.json](build-inputs.lock.json), then runs the Python standard
 library image acceptance suite. The build needs network access to Docker Hub and
-the pinned GitHub release; the image tests run without external network access.
+the pinned GitHub release. Blocking image tests run without external network access;
+the advisory YouTube test uses the network and reports failures as warnings.
 Readiness is probed over HTTP inside a temporary container, without publishing
 a host port. Test containers are removed after use.
 
@@ -40,16 +41,42 @@ before testing a separately supplied candidate.
 The image adds yt-dlp, ffmpeg and ffprobe, enables Node.js in `/etc/yt-dlp.conf`,
 and creates the empty n8n files folder `/home/node/.n8n-files` owned by `node`.
 It preserves upstream n8n's startup and settings. Execute Command remains
-disabled by default. To enable it while keeping Local File Trigger excluded,
-add this deployment setting to your Compose service:
+disabled by default. The generic [example Compose file](examples/compose.yaml)
+is the source of the `NODES_EXCLUDE` deployment setting that enables Execute
+Command while keeping only Local File Trigger excluded. Copy that setting into
+your service, or adapt the example, which also persists n8n data and the n8n files
+folder in named volumes.
 
-```yaml
-environment:
-  NODES_EXCLUDE: '["n8n-nodes-base.localFileTrigger"]'
+Until publishing is available, try the example with a locally built image:
+
+```sh
+docker tag n8n-ytdlp:local aliyusufergin/n8n-ytdlp:2
+docker compose -f examples/compose.yaml up -d
 ```
 
 Keep the JSON valid: n8n treats invalid JSON in `NODES_EXCLUDE` as an empty list,
 which enables every node.
+
+The workflow acceptance test reads that setting with `docker compose config`,
+imports [a fixture workflow](tests/fixtures/media-workflow.json) using
+`import:workflow`, and runs it with `execute --id`. Its Execute Command node runs
+yt-dlp and ffmpeg as `node`, generates audio in the n8n files folder, and passes
+it to Read/Write Files from Disk. The test checks the successful execution and
+binary output. A separate offline test generates video and audio, merges and
+converts them, then checks the streams, codecs and duration with ffprobe.
+
+The YouTube test attempts to download "Me at the zoo" using
+`worstvideo+worstaudio`, merges the separate streams with ffmpeg and checks the
+result with ffprobe. It has a 180-second timeout; all failures are non-blocking
+warnings. To reproduce a real network failure without waiting for a bot check:
+
+```sh
+python3 scripts/build_and_test.py --youtube-network none ImageTests.test_youtube_download
+```
+
+The already-loaded-image command accepts `--youtube-network none` too. This
+only disables the YouTube test container's network; blocking tests always run
+without external network access.
 
 ## Locked build inputs
 
@@ -94,9 +121,10 @@ Each job copies the final 60 KB of build and test output, including suite
 warnings, into the run summary even when a test fails. The full output remains
 in the job log. Warning-only tests must report their warning and return success
 so they do not mask blocking failures or fail the job themselves.
-The YouTube download test is tracked separately in
-[issue #5](https://github.com/aliyusufergin/n8n-custom-ytdlp/issues/5); it is not
-yet part of the suite.
+After the normal suite, each job repeats just the YouTube test with networking
+disabled. This verifies that an actual download failure emits the warning and
+returns success. That output and the verification outcome also appear in the
+run summary, independently of whether the live YouTube request succeeds.
 
 The [Image workflow](.github/workflows/image.yml) calls the
 [reusable build-and-test workflow](.github/workflows/build-and-test.yml), which

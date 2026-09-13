@@ -1,0 +1,15 @@
+services:
+  n8n:
+    image: aliyusufergin/n8n-ytdlp:2
+    ports:
+      - "5678:5678"
+    environment:
+      # Enable Execute Command while retaining n8n's Local File Trigger exclusion.
+      NODES_EXCLUDE: '["n8n-nodes-base.localFileTrigger"]'
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - n8n-files:/home/node/.n8n-files
+
+volumes:
+  n8n-data:
+  n8n-files:
