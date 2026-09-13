@@ -115,7 +115,51 @@ The seed was resolved from upstream on 2026-09-12:
 All three upstream image indexes were checked to include linux/amd64 and
 linux/arm64.
 
+## Updater planning
+
+Run the planner locally or in CI with Python 3 and the standard library:
+
+```sh
+python3 scripts/updater.py --trigger scheduled
+python3 scripts/updater.py --lock build-inputs.lock.json --trigger manual --now 2026-09-12T06:17:00Z
+```
+
+The command prints one JSON object to stdout with these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `build` | Whether this run should build |
+| `reason` | `build inputs unchanged` or `<trigger> trigger` |
+| `new_lock` | Lock contents for the plan |
+| `floating_tags` | Exactly `X`, `X.Y`, `X.Y.Z` from the locked n8n version |
+| `build_tag` | `X.Y.Z-YYYYMMDD-HHMM` from the run's UTC time |
+| `notices` | Notices to raise; currently an empty list |
+
+This first slice takes the lock's build inputs as the current state and makes
+no network requests. `scheduled` therefore skips building; `manual`, `push`
+and `pull_request` request a build even with unchanged inputs. Tags are included
+in either case, and never include `latest`. A `push` means a qualifying push;
+documentation-only filtering belongs to the calling workflow. A plan requests
+only a build: pull-request callers must never publish.
+
+`--now` accepts an ISO 8601 timestamp with `Z` or a UTC offset and normalizes it
+to UTC; omitting it uses the current UTC time. `--lock` defaults to the repository's
+`build-inputs.lock.json`, regardless of the working directory. The command leaves
+the file and its `published` metadata unchanged; only successful publishing can
+record a new published result. Upstream resolution and bootstrapping a missing
+lock arrive in later slices. For now a missing or unreadable lock, a nonnumeric
+n8n version, or invalid command arguments fail with a nonzero exit code and a
+diagnostic on stderr.
+
+Run the offline command acceptance tests (including controlled-clock cases):
+
+```sh
+python3 tests/test_updater.py
+```
+
 ## Pull-request checks
+
+Every pull request also runs the offline updater command suite in a separate job.
 
 Every pull request runs `python3 scripts/build_and_test.py` on native
 `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm` (arm64) GitHub-hosted runners,
