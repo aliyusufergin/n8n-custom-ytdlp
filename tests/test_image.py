@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -68,8 +69,26 @@ class ImageTests(unittest.TestCase):
                 version_line = self.command(tool, "-version").splitlines()[0]
                 self.assertEqual(version_line.split()[2], self.lock["ffmpeg"]["version"])
 
-    def test_system_yt_dlp_config(self):
-        self.assertEqual(self.command("cat", "/etc/yt-dlp.conf"), "--js-runtimes node")
+    def test_yt_dlp_wiring(self):
+        result = subprocess.run(
+            ["docker", "run", "--rm", "--network", "none", "--user", "node",
+             "--entrypoint", "yt-dlp", self.image, "--verbose"],
+            capture_output=True, text=True, timeout=120,
+        )
+        diagnostics = result.stdout + result.stderr
+        # No URL is intentional: yt-dlp reports tool detection before this usage error.
+        self.assertEqual(result.returncode, 2, diagnostics)
+        self.assertIn("You must provide at least one URL", diagnostics)
+        node_version = self.command("node", "--version").removeprefix("v")
+        self.assertRegex(diagnostics,
+                         rf"(?m)^\[debug\] JS runtimes: .*\bnode-{re.escape(node_version)}(?:,|$)")
+        for tool in ("ffmpeg", "ffprobe"):
+            with self.subTest(tool=tool):
+                self.assertRegex(
+                    diagnostics,
+                    rf"(?m)^\[debug\] exe versions: .*\b{tool} "
+                    rf"{re.escape(self.lock['ffmpeg']['version'])}(?:[ ,(]|$)",
+                )
 
     def test_offline_ffmpeg(self):
         result = json.loads(self.command("sh", "-ec", """
@@ -105,19 +124,38 @@ class ImageTests(unittest.TestCase):
             "directory": True, "uid": 1000, "gid": 1000, "entries": [],
         })
 
-    def test_execute_command_workflow(self):
-        compose = json.loads(subprocess.check_output(
-            ["docker", "compose", "-f", str(ROOT / "examples/compose.yaml"),
-             "config", "--format", "json"], text=True, timeout=30,
-        ))
-        excluded = compose["services"]["n8n"]["environment"]["NODES_EXCLUDE"]
-        self.assertEqual(json.loads(excluded), ["n8n-nodes-base.localFileTrigger"])
+    def test_n8n_files_fresh_volume_writable(self):
+        volume = "n8n-ytdlp-files-" + uuid.uuid4().hex
+        subprocess.run(["docker", "volume", "create", volume],
+                       check=True, capture_output=True, text=True, timeout=30)
+        self.addCleanup(subprocess.run, ["docker", "volume", "rm", volume],
+                        check=True, capture_output=True, text=True, timeout=30)
+        name = "n8n-ytdlp-files-" + uuid.uuid4().hex
+        # Clean up the container before the volume, including after a run timeout.
+        self.addCleanup(subprocess.run, ["docker", "rm", "--force", "--volumes", name],
+                        capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            ["docker", "run", "--rm", "--name", name, "--network", "none",
+             "--user", "node", "--mount",
+             f"type=volume,src={volume},dst=/home/node/.n8n-files",
+             "--entrypoint", "node", self.image, "-e", """
+                const fs = require('node:fs');
+                const path = '/home/node/.n8n-files/volume-test.txt';
+                fs.writeFileSync(path, 'written by node', {flag: 'wx'});
+                console.log(fs.readFileSync(path, 'utf8'));
+                fs.unlinkSync(path);
+             """], capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.strip(), "written by node")
+
+    def execute_media_workflow(self, *container_options: str) -> subprocess.CompletedProcess:
         name = "n8n-ytdlp-workflow-" + uuid.uuid4().hex
         self.addCleanup(subprocess.run, ["docker", "rm", "--force", "--volumes", name],
                         check=True, capture_output=True, text=True, timeout=30)
         subprocess.run(
             ["docker", "run", "--detach", "--name", name, "--network", "none",
-             "--env", f"NODES_EXCLUDE={excluded}",
+             *container_options,
              "--mount", f"type=bind,src={ROOT / 'tests/fixtures'},dst=/fixtures,readonly",
              "--entrypoint", "sleep", self.image, "600"],
             check=True, capture_output=True, text=True, timeout=30,
@@ -128,10 +166,25 @@ class ImageTests(unittest.TestCase):
             capture_output=True, text=True, timeout=120,
         )
         self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
-        executed = subprocess.run(
+        return subprocess.run(
             ["docker", "exec", name, "n8n", "execute", "--id=media-acceptance",
              "--rawOutput"], capture_output=True, text=True, timeout=120,
         )
+
+    def test_execute_command_unavailable_by_default(self):
+        executed = self.execute_media_workflow()
+        diagnostics = executed.stdout + executed.stderr
+        self.assertNotEqual(executed.returncode, 0, diagnostics)
+        self.assertIn("Unrecognized node type: n8n-nodes-base.executeCommand", diagnostics)
+
+    def test_execute_command_workflow(self):
+        compose = json.loads(subprocess.check_output(
+            ["docker", "compose", "-f", str(ROOT / "examples/compose.yaml"),
+             "config", "--format", "json"], text=True, timeout=30,
+        ))
+        excluded = compose["services"]["n8n"]["environment"]["NODES_EXCLUDE"]
+        self.assertEqual(json.loads(excluded), ["n8n-nodes-base.localFileTrigger"])
+        executed = self.execute_media_workflow("--env", f"NODES_EXCLUDE={excluded}")
         self.assertEqual(executed.returncode, 0, executed.stdout + executed.stderr)
         # n8n prints startup diagnostics before its pretty-printed raw JSON result.
         start = executed.stdout.find("{\n")
