@@ -90,6 +90,14 @@ class UpdaterTests(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
                 self.assertIn("n8n version", result.stderr)
 
+    def test_manual_plan_rejects_n8n_3_before_requesting_a_build(self) -> None:
+        self.lock["n8n"]["version"] = "3.0.0"
+        self.lock_path.write_text(json.dumps(self.lock))
+        result = self.invoke("manual")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("major 2", result.stderr)
+
     def test_planning_preserves_last_published_result_and_lock_file(self) -> None:
         self.lock["published"] = {
             "build_tag": "2.38.7-20260911-0617",
