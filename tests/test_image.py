@@ -19,6 +19,7 @@ class ImageTests(unittest.TestCase):
     image: str
     lock: dict
     youtube_network = "bridge"
+    expected_build_tag: str | None = None
 
     def image_config(self, image: str) -> dict:
         return json.loads(subprocess.check_output(
@@ -253,6 +254,8 @@ class ImageTests(unittest.TestCase):
             with self.subTest(label=name):
                 self.assertEqual(labels.get(prefix + name), value)
         build_tag = labels.get(prefix + "build-tag", "")
+        if self.expected_build_tag is not None:
+            self.assertEqual(build_tag, self.expected_build_tag)
         self.assertRegex(build_tag, r"^[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}-[0-9]{4}$")
         self.assertEqual(build_tag.split("-")[0], self.lock["n8n"]["version"])
         self.assertEqual(labels.get("org.opencontainers.image.version"), build_tag)
@@ -303,10 +306,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", help="Candidate image already loaded in Docker")
     parser.add_argument("lock", type=Path, help="JSON build inputs for this image")
+    parser.add_argument("--build-tag", help="Exact build tag required by a publishing plan")
     parser.add_argument("--youtube-network", choices=("bridge", "none"), default="bridge",
                         help="Use none to reproduce a warning-only YouTube network failure")
     args, tests = parser.parse_known_args()
     ImageTests.image = args.image
     ImageTests.lock = json.loads(args.lock.read_text())
     ImageTests.youtube_network = args.youtube_network
+    ImageTests.expected_build_tag = args.build_tag
     unittest.main(argv=[__file__, *tests], verbosity=2)

@@ -5,8 +5,8 @@ Custom [n8n](https://n8n.io/) image bundled with [yt-dlp](https://github.com/yt-
 ## Status
 
 The custom image can be built and tested locally and on pull requests, natively
-on amd64 and arm64. Automatic upstream tracking and publishing are planned
-separately.
+on amd64 and arm64. A maintainer can publish through the manual workflow after
+merge and approval of its first run. Scheduled upstream tracking comes later.
 
 ## Build and test locally
 
@@ -53,7 +53,7 @@ Command while keeping only Local File Trigger excluded. Copy that setting into
 your service, or adapt the example, which also persists n8n data and the n8n files
 folder in named volumes.
 
-Until publishing is available, try the example with a locally built image:
+Before the first approved publishing run, try the example with a locally built image:
 
 ```sh
 docker tag n8n-ytdlp:local aliyusufergin/n8n-ytdlp:2
@@ -92,10 +92,9 @@ ffmpeg's version and multi-architecture digest. Docker selects the image for the
 host architecture; the recipe selects and verifies the corresponding yt-dlp asset.
 Build arguments contain only public metadata.
 
-The seed's `published.build_tag` and `published.image_digest` are `null` because
-this work has not published an image. A future successful publish will fill
-these fields. Local builds generate a UTC build tag for their image labels and
-leave the committed lock unchanged.
+The seed's `published.build_tag` and `published.image_digest` are `null` until
+the first successful publish fills these fields. Local builds generate a UTC
+build tag for their image labels and leave the committed lock unchanged.
 
 The seed was resolved from upstream on 2026-09-12:
 
@@ -148,8 +147,8 @@ to UTC; omitting it uses the current UTC time. `--lock` defaults to the reposito
 the file and its `published` metadata unchanged; only successful publishing can
 record a new published result. Upstream resolution and bootstrapping a missing
 lock arrive in later slices. For now a missing or unreadable lock, a nonnumeric
-n8n version, or invalid command arguments fail with a nonzero exit code and a
-diagnostic on stderr.
+n8n version, a version outside major 2, or invalid command arguments fail with a
+nonzero exit code and a diagnostic on stderr.
 
 Run the offline command acceptance tests (including controlled-clock cases):
 
@@ -178,8 +177,78 @@ run summary, independently of whether the live YouTube request succeeds.
 
 The [Image workflow](.github/workflows/image.yml) calls the
 [reusable build-and-test workflow](.github/workflows/build-and-test.yml), which
-can also be called by the future publishing pipeline. Pull-request checks need
+also supplies candidates to the manual publishing pipeline. Pull-request checks need
 no repository secrets, use only `contents: read`, and disable persisted checkout
 credentials. They do not log in to registries, push images, attest, commit, or
 open issues. Buildx's default provenance attestations are disabled for these
 checks. The checkout action is pinned to a full commit SHA.
+
+## Manual publishing
+
+The [Manual publish workflow](.github/workflows/publish.yml) accepts only
+`workflow_dispatch` on `main`. After merge, the first run requires the maintainer's
+explicit approval. A maintainer can then start it from Actions or with:
+
+```sh
+gh workflow run publish.yml --ref main
+```
+
+It calls the updater with `--trigger manual`, then reuses the native amd64 and
+arm64 build-and-test jobs. Each job exports one OCI archive with BuildKit
+provenance and an SBOM, loads it into Docker's containerd image store, verifies
+that the loaded platform manifest digest matches the archive, and runs the image
+suite with the plan's exact build tag. Only successful jobs upload candidates.
+The publishing job checks the archives against their test receipts and the
+attestation subjects, copies them without rebuilding, and creates a combined OCI
+image index. It reads the manifests back to verify their digests before tagging.
+Two further native jobs anonymously pull the published floating tag, run the
+image suite on amd64 and arm64, and check all custom and runners tag digests.
+The lock commit waits for both jobs to pass.
+
+Both `aliyusufergin/n8n-ytdlp` and `aliyusufergin/n8n-ytdlp-runners` receive the
+plan's `X`, `X.Y`, `X.Y.Z` floating tags and `X.Y.Z-YYYYMMDD-HHMM` build tag.
+There is no `latest` tag. The companion runners image is copied recursively from
+the locked upstream digest, with no modifications or additional attestations;
+every runners tag is checked against that digest. Docker Hub's configured
+immutability rule protects build tags. Use a new run with a new UTC-minute build
+tag after a partial publish instead of rerunning the same plan.
+
+Only the publishing job receives `DOCKERHUB_TOKEN`, using the repository variable
+`DOCKERHUB_USERNAME=aliyusufergin`. Only the final lock-commit job has
+`contents: write`. It starts from current `main`, verifies that its build inputs
+have not changed since the tested revision, records the verified custom image
+index digest and build tag, and pushes a descriptive commit with `GITHUB_TOKEN`.
+It never force-pushes. A competing push can reject the commit; start a new run
+after resolving the competing change. Workflow-token pushes do not retrigger CI.
+
+Publishing runs are serialized with `cancel-in-progress: false`. A failure stops
+the remaining steps and prevents the lock commit. Registry tag updates across
+two repositories are not atomic: an interrupted publish may move some tags.
+The next successful run republishes all tags to restore pairing. This slice
+does not add schedules, push triggers, Sigstore attestations or failure issues.
+
+For a local reproduction of the publishing candidate (Docker 29.8+ with the
+containerd image store and Buildx with OCI export support):
+
+```sh
+python3 scripts/updater.py --trigger manual > /tmp/plan.json
+python3 scripts/build_and_test.py --plan /tmp/plan.json --archive /tmp/candidate/image.tar
+```
+
+The plan's lock is written beside the plan as `candidate.lock.json`; the successful
+test receipt is written beside the archive as `image.json`. Neither command
+publishes or changes the repository lock. Standard local and PR builds retain
+their existing behavior.
+
+After the approved first run, verify anonymously on native amd64 and arm64 hosts:
+
+```sh
+docker pull aliyusufergin/n8n-ytdlp:2
+python3 tests/test_image.py aliyusufergin/n8n-ytdlp:2 build-inputs.lock.json
+regctl image digest aliyusufergin/n8n-ytdlp-runners:2
+```
+
+Use the newly committed lock and pull its upstream n8n digest before running the
+suite as described above. Compare the runners result with `n8n.runners_digest`
+in that lock; repeat for its minor, patch and build tags. This live verification
+is still pending until the first publishing run is approved.

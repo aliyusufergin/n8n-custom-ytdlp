@@ -38,6 +38,8 @@ def main() -> None:
         parser.error("lock file must contain an n8n version")
     if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         parser.error("n8n version must be numeric X.Y.Z")
+    if version.split(".")[0] != "2":
+        parser.error("n8n version must remain on the major 2 stable track")
     now = args.now if args.now is not None else datetime.now(timezone.utc)
     major, minor, _ = version.split(".")
     build = args.trigger in ("manual", "push", "pull_request")
