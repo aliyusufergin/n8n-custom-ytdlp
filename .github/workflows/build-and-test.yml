@@ -61,3 +61,7 @@ jobs:
             tail -c 60000 "$RUNNER_TEMP/build-and-test.log"
             printf '\n~~~~\n'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$WARNING_OUTCOME" = success ]; then
+            grep -F 'WARNING: YouTube download failed (non-blocking):' "$GITHUB_STEP_SUMMARY"
+            printf 'Verified the YouTube failure warning in GITHUB_STEP_SUMMARY (%s).\n' "$ARCH"
+          fi
