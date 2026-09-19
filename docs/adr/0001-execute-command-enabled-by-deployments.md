@@ -8,4 +8,4 @@ n8n 2.x excludes the Execute Command node by default via `NODES_EXCLUDE`. The cu
 
 ## Consequences
 
-- As refined by [issue #5](https://github.com/aliyusufergin/n8n-custom-ytdlp/issues/5), the example Compose file is the single source of the exact `NODES_EXCLUDE` deployment setting. The README links to it, and the workflow acceptance test reads it directly. The README must still warn that n8n parses invalid JSON there as an empty list, which enables every node.
+- As refined by [issue #5](https://github.com/aliyusufergin/n8n-custom-ytdlp/issues/5), the example Compose file is the single source of the exact `NODES_EXCLUDE` deployment setting. The workflow acceptance test reads it directly. As [issue #14](https://github.com/aliyusufergin/n8n-custom-ytdlp/issues/14) requires, the README links to it and also shows the value; the same test checks that the README shows exactly that line. The README must still warn that n8n parses invalid JSON there as an empty list, which enables every node.

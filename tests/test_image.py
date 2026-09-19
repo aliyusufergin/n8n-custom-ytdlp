@@ -185,6 +185,10 @@ class ImageTests(unittest.TestCase):
         ))
         excluded = compose["services"]["n8n"]["environment"]["NODES_EXCLUDE"]
         self.assertEqual(json.loads(excluded), ["n8n-nodes-base.localFileTrigger"])
+        # Deployments copy the value from the README, so it must show this exact setting.
+        setting = f"NODES_EXCLUDE: '{excluded}'"
+        self.assertTrue(setting in (ROOT / "README.md").read_text(),
+                        f"README.md does not show {setting}")
         executed = self.execute_media_workflow("--env", f"NODES_EXCLUDE={excluded}")
         self.assertEqual(executed.returncode, 0, executed.stdout + executed.stderr)
         # n8n prints startup diagnostics before its pretty-printed raw JSON result.
