@@ -194,9 +194,9 @@ for both linux/amd64 and linux/arm64.
 - **Floating tags** (`2`, `2.Y`, `2.Y.Z`) move to each new custom image. A new
   one is published when any build input changes: a new n8n version on the stable
   track, a new yt-dlp nightly, a new ffmpeg release, or an upstream image
-  re-pushed under the same version. A change to how this repository builds the
-  image publishes one too. Floating tags move only after the new image passed
-  every blocking test on both architectures.
+  re-pushed under the same version. A push to this repository that changes more
+  than documentation publishes one too. Floating tags move only after the new
+  custom image passed every blocking test on both architectures.
 - **Build tags** (`2.Y.Z-YYYYMMDD-HHMM`) never move, and Docker Hub refuses to
   overwrite them. Use one to pin a known-good image or to roll back.
 - **There is no `latest` tag.** An image reference without a tag fails to pull,
@@ -618,11 +618,11 @@ It starts:
 
 - **Every 6 hours at minute 17** UTC. It publishes only when the plan says a
   build input changed.
-- **On a push to `main`** that changes more than documentation. It publishes even
-  when no build input changed, so changes to the image recipe or the pipeline
-  reach the image. A push that changes only Markdown files, `docs/` or
-  `examples/` does not start it, so a README fix does not restart
-  auto-updating deployments. Merging a pull request is such a push.
+- **On a push to `main`** that changes more than documentation, including the
+  merge of a pull request. It publishes even when no build input changed, so
+  changes to the image recipe, the tests or the pipeline reach the custom image.
+  A push that changes only Markdown files, `docs/` or `examples/` does not start
+  it, so a README fix does not restart auto-updating deployments.
 - **By hand**, from Actions or with the command below. Like a push, it publishes
   even when no build input changed.
 

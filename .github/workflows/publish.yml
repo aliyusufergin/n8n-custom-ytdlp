@@ -44,11 +44,11 @@ jobs:
           persist-credentials: false
       - name: Check out the lock file of current main
         # A queued run's revision can predate the lock commit of the run before it, so
-        # planning against that revision's lock would publish the same inputs again.
+        # planning against that revision's lock would publish the same build inputs again.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-          path: main
+          path: current
           persist-credentials: false
           sparse-checkout: /build-inputs.lock.json
           sparse-checkout-cone-mode: false
@@ -62,10 +62,10 @@ jobs:
         run: |
           python3 tests/test_updater.py
           mkdir -p "$RUNNER_TEMP/plan"
-          lock=main/build-inputs.lock.json
-          # The lock commit checks that main's build inputs still match this lock.
+          lock=current/build-inputs.lock.json
+          # The lock commit checks that main's build inputs still match this previous lock.
           if [ -f "$lock" ]; then
-            cp "$lock" "$RUNNER_TEMP/plan/base.lock.json"
+            cp "$lock" "$RUNNER_TEMP/plan/previous.lock.json"
           fi
           python3 scripts/updater.py --lock "$lock" --trigger "$TRIGGER" > "$RUNNER_TEMP/plan/plan.json"
           python3 - "$RUNNER_TEMP/plan/plan.json" >> "$GITHUB_OUTPUT" <<'PY'
@@ -73,7 +73,7 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           print(f'build={str(plan["build"]).lower()}')
           PY
-      - name: Save the plan and the lock it started from for this run
+      - name: Save the plan and the previous lock for this run
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: publish-plan
@@ -323,7 +323,7 @@ jobs:
           python3 automation/scripts/commit_lock.py
           --repository current
           --plan "$RUNNER_TEMP/plan/plan.json"
-          --previous-lock "$RUNNER_TEMP/plan/base.lock.json"
+          --previous-lock "$RUNNER_TEMP/plan/previous.lock.json"
           --result "$RUNNER_TEMP/result/published.lock.json"
 
   notify:

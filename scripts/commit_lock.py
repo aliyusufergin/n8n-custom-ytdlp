@@ -17,7 +17,7 @@ def main() -> None:
     parser.add_argument("--repository", type=Path, required=True)
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--previous-lock", type=Path, required=True,
-                        help="Lock the plan started from; a missing file means main had none")
+                        help="Lock on main that the plan compared against; a missing file means main had none")
     parser.add_argument("--result", type=Path, required=True)
     args = parser.parse_args()
     plan = json.loads(args.plan.read_text())
@@ -33,7 +33,7 @@ def main() -> None:
             raise ValueError("main's build inputs changed during this run; run the workflow again")
         if published[name] != plan["new_lock"][name]:
             raise ValueError("published inputs differ from the plan")
-    # The plan's summary compares against the lock it started from, which main still matches.
+    # The plan's summary compares against the previous lock, which main still matches.
     message = f'Publish {plan["change_summary"]} ({plan["build_tag"]})'
     lock_path.write_text(json.dumps(published, indent=2) + "\n")
     for command in (["git", "add", "--", "build-inputs.lock.json"],
