@@ -146,16 +146,18 @@ For n8n it follows the stable track
 1. reads `releases/latest` of `n8n-io/n8n`; an `n8n@2.Y.Z` marker is the planned
    version. GitHub prerelease flags are ignored, because n8n's are unreliable;
 2. when the marker's major version is not 2, plans the highest `n8n@2.Y.Z` tag
-   on the locked `2.Y` minor, or keeps the locked version when none is newer. It
-   also raises the notice `n8n-<major>` ("n8n 3.x available"), which opens one
-   issue per major version;
+   on the locked `2.Y` minor, or keeps the locked version when none is newer. n8n
+   creates each such tag with its release, and one request lists a minor's tags.
+   It also raises the notice `n8n-<major>` ("n8n 3.x available"), which opens
+   one issue per major version;
 3. resolves the `n8nio/n8n` and `n8nio/runners` index digests of the planned
    version with anonymous Docker Hub manifest HEAD requests, which don't count
    against pull limits.
 
 A changed digest under the same version plans a build (`n8n X.Y.Z republished`).
-When either Docker tag of a planned version is not pushed yet, the run keeps the
-locked n8n entry, says so on stderr and does not fail; a later run retries.
+When either Docker tag of a newly planned version is not pushed yet, the run keeps
+the locked n8n entry, says so on stderr and does not fail; a later run retries.
+A missing Docker tag of the locked version itself fails the run.
 
 For yt-dlp it:
 

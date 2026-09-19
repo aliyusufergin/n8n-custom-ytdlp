@@ -17,10 +17,14 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 N8N_REPO = "n8n-io/n8n"
+# The custom image follows n8n's stable track only while its major version is this one.
+STABLE_MAJOR = "2"
+VERSION = r"[0-9]+\.[0-9]+\.[0-9]+"
 # Each n8n lock field and the Docker Hub repository whose index digest it records.
 N8N_IMAGES = (("image_digest", "n8nio/n8n"), ("runners_digest", "n8nio/runners"))
 DOCKER_HUB = "https://registry-1.docker.io/v2"
-IMAGE_INDEX = "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json"
+IMAGE_INDEX = ("application/vnd.oci.image.index.v1+json, "
+               "application/vnd.docker.distribution.manifest.list.v2+json")
 YT_DLP_NIGHTLY_REPO = "yt-dlp/yt-dlp-nightly-builds"
 YT_DLP_ASSETS = ("yt-dlp_musllinux", "yt-dlp_musllinux_aarch64")
 # yt-dlp's public.key, committed so that no key is ever fetched at run time.
@@ -47,11 +51,11 @@ class Upstream:
         self.record = record
 
     @staticmethod
-    def replayed(recording: Path, name: str, request: str) -> bytes:
+    def replayed(recording: Path, name: str, label: str) -> bytes:
         try:
             return (recording / name).read_bytes()
         except FileNotFoundError:
-            raise UpstreamError(f"no recorded response for {request}") from None
+            raise UpstreamError(f"no recorded response for {label}") from None
 
     def save(self, name: str, body: bytes) -> None:
         if self.record is not None:
@@ -76,8 +80,8 @@ class Upstream:
         self.save(name, body)
         return body
 
-    def head(self, url: str, accept: str) -> dict[str, str] | None:
-        """Return a registry HEAD response's recorded headers, or None if url does not exist.
+    def head_manifest(self, url: str) -> dict[str, str] | None:
+        """Return a registry manifest HEAD response's recorded headers, or None if url does not exist.
 
         The response is recorded as JSON: {"status": 200 or 404, "headers": {...}}.
         """
@@ -85,13 +89,13 @@ class Upstream:
         if self.replay is not None:
             response = json.loads(self.replayed(self.replay, name, f"HEAD {url}"))
         else:
-            response = self.head_live(url, accept)
+            response = self.head_manifest_live(url)
             self.save(name, json.dumps(response, indent=2).encode() + b"\n")
         return response["headers"] if response["status"] == 200 else None
 
     @staticmethod
-    def head_live(url: str, accept: str) -> dict:
-        request = Request(url, method="HEAD", headers={"Accept": accept})
+    def head_manifest_live(url: str) -> dict:
+        request = Request(url, method="HEAD", headers={"Accept": IMAGE_INDEX})
         try:
             while True:
                 try:
@@ -118,7 +122,7 @@ class Upstream:
 def index_digest(upstream: Upstream, repository: str, tag: str) -> str | None:
     """Return a Docker Hub tag's image index digest, or None while the tag does not exist."""
     # Manifest HEAD requests do not count against Docker Hub's pull limit.
-    headers = upstream.head(f"{DOCKER_HUB}/{repository}/manifests/{tag}", IMAGE_INDEX)
+    headers = upstream.head_manifest(f"{DOCKER_HUB}/{repository}/manifests/{tag}")
     if headers is None:
         return None
     digest = headers.get("docker-content-digest")
@@ -133,15 +137,16 @@ def n8n_version(upstream: Upstream, locked: str) -> tuple[str, list[dict]]:
     release = json.loads(upstream.get(f"https://api.github.com/repos/{N8N_REPO}/releases/latest"))
     # Only the latest-release marker counts; n8n's prerelease flags are unreliable.
     tag = release["tag_name"]
-    match = re.fullmatch(r"n8n@([0-9]+\.[0-9]+\.[0-9]+)", tag) if isinstance(tag, str) else None
+    match = re.fullmatch(rf"n8n@({VERSION})", tag) if isinstance(tag, str) else None
     if match is None:
         raise UpstreamError(f"unexpected n8n latest release tag: {tag!r}")
     marker = match[1]
     major = marker.split(".")[0]
-    if major == "2":
+    if major == STABLE_MAJOR:
         return marker, []
-    # Follow patches of the locked 2.x minor. Every n8n release has a tag of the same name,
-    # and one request lists a minor's tags where the releases list needs many pages.
+    # Follow patches of the locked 2.x minor. n8n creates each n8n@X.Y.Z tag with its release,
+    # and one request lists a minor's tags where the releases list needs many pages; a tag
+    # whose images were never pushed is skipped like any version that is not pushed yet.
     minor, patch = locked.rsplit(".", 1)
     refs = json.loads(upstream.get(
         f"https://api.github.com/repos/{N8N_REPO}/git/matching-refs/tags/n8n@{minor}."))
@@ -164,6 +169,8 @@ def resolve_n8n(upstream: Upstream, locked: dict) -> tuple[dict, list[dict]]:
     entry = {"version": version}
     for field, repository in N8N_IMAGES:
         if (digest := index_digest(upstream, repository, version)) is None:
+            if version == locked["version"]:
+                raise UpstreamError(f"{repository}:{version} of the locked n8n version no longer exists")
             # n8n usually pushes its images before it marks the release; a later run retries.
             print(f"{repository}:{version} is not pushed yet; keeping n8n {locked['version']}",
                   file=sys.stderr)
@@ -266,9 +273,9 @@ def main() -> None:
         version = lock["n8n"]["version"]
     except (KeyError, TypeError):
         parser.error("lock file must contain an n8n version")
-    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    if not isinstance(version, str) or not re.fullmatch(VERSION, version):
         parser.error("n8n version must be numeric X.Y.Z")
-    if version.split(".")[0] != "2":
+    if version.split(".")[0] != STABLE_MAJOR:
         parser.error("n8n version must remain on the major 2 stable track")
     now = args.now if args.now is not None else datetime.now(timezone.utc)
     upstream = Upstream(args.replay, args.record)

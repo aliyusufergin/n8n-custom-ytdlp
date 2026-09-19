@@ -179,6 +179,14 @@ class UpdaterTests(unittest.TestCase):
                 self.assertEqual(plan["new_lock"], self.lock)
                 self.assertEqual(plan["floating_tags"], ["2", "2.38", "2.38.7"])
 
+    def test_missing_docker_tag_of_the_locked_version_fails_without_a_plan(self) -> None:
+        for repository in ("n8nio/n8n", "n8nio/runners"):
+            with self.subTest(repository=repository):
+                self.replay()
+                self.recorded(f"HEAD {REGISTRY}/{repository}/manifests/2.38.7").write_text(
+                    json.dumps(UNKNOWN_TAG))
+                self.assert_fails_without_plan(self.invoke("scheduled"), f"{repository}:2.38.7")
+
     def test_n8n_3_marker_keeps_the_locked_version_when_its_minor_has_no_later_patch(self) -> None:
         for marker in ("n8n@3.0.0", "n8n@3.1.2"):
             with self.subTest(marker=marker):
