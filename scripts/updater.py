@@ -8,12 +8,23 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
-from urllib.parse import quote
+from urllib.error import HTTPError
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
+N8N_REPO = "n8n-io/n8n"
+# The custom image follows n8n's stable track only while its major version is this one.
+STABLE_MAJOR = "2"
+VERSION = r"[0-9]+\.[0-9]+\.[0-9]+"
+# Each n8n lock field and the Docker Hub repository whose index digest it records.
+N8N_IMAGES = (("image_digest", "n8nio/n8n"), ("runners_digest", "n8nio/runners"))
+DOCKER_HUB = "https://registry-1.docker.io/v2"
+IMAGE_INDEX = ("application/vnd.oci.image.index.v1+json, "
+               "application/vnd.docker.distribution.manifest.list.v2+json")
 YT_DLP_NIGHTLY_REPO = "yt-dlp/yt-dlp-nightly-builds"
 YT_DLP_ASSETS = ("yt-dlp_musllinux", "yt-dlp_musllinux_aarch64")
 # yt-dlp's public.key, committed so that no key is ever fetched at run time.
@@ -31,20 +42,30 @@ class Upstream:
     """Upstream responses, fetched live or replayed from a recording directory.
 
     A recording holds one file per URL, named by the URL percent-encoded with
-    urllib.parse.quote(url, safe=""). Replay never falls back to the network.
+    urllib.parse.quote(url, safe=""); a HEAD response's file is named the same way
+    after "HEAD " + url. Replay never falls back to the network.
     """
 
     def __init__(self, replay: Path | None = None, record: Path | None = None) -> None:
         self.replay = replay
         self.record = record
 
+    @staticmethod
+    def replayed(recording: Path, name: str, label: str) -> bytes:
+        try:
+            return (recording / name).read_bytes()
+        except FileNotFoundError:
+            raise UpstreamError(f"no recorded response for {label}") from None
+
+    def save(self, name: str, body: bytes) -> None:
+        if self.record is not None:
+            self.record.mkdir(parents=True, exist_ok=True)
+            (self.record / name).write_bytes(body)
+
     def get(self, url: str) -> bytes:
         name = quote(url, safe="")
         if self.replay is not None:
-            try:
-                return (self.replay / name).read_bytes()
-            except FileNotFoundError:
-                raise UpstreamError(f"no recorded response for {url}") from None
+            return self.replayed(self.replay, name, url)
         request = Request(url)
         if url.startswith("https://api.github.com/"):
             request.add_header("Accept", "application/vnd.github+json")
@@ -56,10 +77,106 @@ class Upstream:
                 body = response.read()
         except OSError as error:
             raise UpstreamError(f"cannot fetch {url}: {error}") from error
-        if self.record is not None:
-            self.record.mkdir(parents=True, exist_ok=True)
-            (self.record / name).write_bytes(body)
+        self.save(name, body)
         return body
+
+    def head_manifest(self, url: str) -> dict[str, str] | None:
+        """Return a registry manifest HEAD response's recorded headers, or None if url does not exist.
+
+        The response is recorded as JSON: {"status": 200 or 404, "headers": {...}}.
+        """
+        name = quote(f"HEAD {url}", safe="")
+        if self.replay is not None:
+            response = json.loads(self.replayed(self.replay, name, f"HEAD {url}"))
+        else:
+            response = self.head_manifest_live(url)
+            self.save(name, json.dumps(response, indent=2).encode() + b"\n")
+        return response["headers"] if response["status"] == 200 else None
+
+    @staticmethod
+    def head_manifest_live(url: str) -> dict:
+        request = Request(url, method="HEAD", headers={"Accept": IMAGE_INDEX})
+        try:
+            while True:
+                try:
+                    with urlopen(request, timeout=60) as response:
+                        # Only the digest is recorded; Docker Hub's other headers name the requesting IP.
+                        digest = response.headers["Docker-Content-Digest"]
+                        return {"status": 200, "headers": {"docker-content-digest": digest}}
+                except HTTPError as error:
+                    if error.code == 404:
+                        return {"status": 404, "headers": {}}
+                    # Docker Hub asks even anonymous clients for a bearer token per repository.
+                    challenge = error.headers.get("WWW-Authenticate", "")
+                    if (error.code != 401 or not challenge.startswith("Bearer ")
+                            or request.has_header("Authorization")):
+                        raise
+                parameters = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+                realm = parameters.pop("realm")
+                with urlopen(f"{realm}?{urlencode(parameters)}", timeout=60) as token:
+                    request.add_unredirected_header("Authorization", f"Bearer {json.load(token)['token']}")
+        except (OSError, KeyError, ValueError) as error:
+            raise UpstreamError(f"cannot fetch HEAD {url}: {error}") from error
+
+
+def index_digest(upstream: Upstream, repository: str, tag: str) -> str | None:
+    """Return a Docker Hub tag's image index digest, or None while the tag does not exist."""
+    # Manifest HEAD requests do not count against Docker Hub's pull limit.
+    headers = upstream.head_manifest(f"{DOCKER_HUB}/{repository}/manifests/{tag}")
+    if headers is None:
+        return None
+    digest = headers.get("docker-content-digest")
+    # The digest becomes a build argument and an image label.
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise UpstreamError(f"{repository}:{tag} has an unexpected index digest: {digest!r}")
+    return digest
+
+
+def n8n_version(upstream: Upstream, locked: str) -> tuple[str, list[dict]]:
+    """Return the stable-track n8n version to build (ADR 0002) and any notices to raise."""
+    release = json.loads(upstream.get(f"https://api.github.com/repos/{N8N_REPO}/releases/latest"))
+    # Only the latest-release marker counts; n8n's prerelease flags are unreliable.
+    tag = release["tag_name"]
+    match = re.fullmatch(rf"n8n@({VERSION})", tag) if isinstance(tag, str) else None
+    if match is None:
+        raise UpstreamError(f"unexpected n8n latest release tag: {tag!r}")
+    marker = match[1]
+    major = marker.split(".")[0]
+    if major == STABLE_MAJOR:
+        return marker, []
+    # Follow patches of the locked 2.x minor. n8n creates each n8n@X.Y.Z tag with its release,
+    # and one request lists a minor's tags where the releases list needs many pages; a tag
+    # whose images were never pushed is skipped like any version that is not pushed yet.
+    minor, patch = locked.rsplit(".", 1)
+    refs = json.loads(upstream.get(
+        f"https://api.github.com/repos/{N8N_REPO}/git/matching-refs/tags/n8n@{minor}."))
+    patches = [int(found[1]) for ref in refs
+               if (found := re.fullmatch(rf"refs/tags/n8n@{re.escape(minor)}\.([0-9]+)", ref["ref"]))]
+    notice = {
+        "key": f"n8n-{major}",
+        "title": f"n8n {major}.x available",
+        "body": f"n8n's latest release is now n8n {marker}. The custom image never moves to a new "
+                f"major version by itself: it keeps following patches of n8n {minor}, its current "
+                f"2.x minor, and stays on the last one when they stop. Moving to {major}.x is the "
+                f"maintainer's decision (ADR 0002).",
+    }
+    return f"{minor}.{max([int(patch), *patches])}", [notice]
+
+
+def resolve_n8n(upstream: Upstream, locked: dict) -> tuple[dict, list[dict]]:
+    """Return the n8n lock entry with both upstream index digests, and any notices to raise."""
+    version, notices = n8n_version(upstream, locked["version"])
+    entry = {"version": version}
+    for field, repository in N8N_IMAGES:
+        if (digest := index_digest(upstream, repository, version)) is None:
+            if version == locked["version"]:
+                raise UpstreamError(f"{repository}:{version} of the locked n8n version no longer exists")
+            # n8n usually pushes its images before it marks the release; a later run retries.
+            print(f"{repository}:{version} is not pushed yet; keeping n8n {locked['version']}",
+                  file=sys.stderr)
+            return locked, notices
+        entry[field] = digest
+    return entry, notices
 
 
 def verify_yt_dlp_signature(sums: bytes, signature: bytes) -> None:
@@ -156,15 +273,18 @@ def main() -> None:
         version = lock["n8n"]["version"]
     except (KeyError, TypeError):
         parser.error("lock file must contain an n8n version")
-    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    if not isinstance(version, str) or not re.fullmatch(VERSION, version):
         parser.error("n8n version must be numeric X.Y.Z")
-    if version.split(".")[0] != "2":
+    if version.split(".")[0] != STABLE_MAJOR:
         parser.error("n8n version must remain on the major 2 stable track")
     now = args.now if args.now is not None else datetime.now(timezone.utc)
+    upstream = Upstream(args.replay, args.record)
     try:
-        new_lock = {**lock, "yt_dlp": resolve_yt_dlp(Upstream(args.replay, args.record))}
+        n8n, notices = resolve_n8n(upstream, lock["n8n"])
+        new_lock = {**lock, "n8n": n8n, "yt_dlp": resolve_yt_dlp(upstream)}
     except UpstreamError as error:
         parser.exit(1, f"{parser.prog}: error: {error}\n")
+    version = n8n["version"]
     major, minor, _ = version.split(".")
     changes = describe_changes(lock, new_lock)
     if changes:
@@ -181,7 +301,7 @@ def main() -> None:
         "floating_tags": [major, f"{major}.{minor}", version],
         "build_tag": f"{version}-{now.year:04d}{now.month:02d}{now.day:02d}-{now:%H%M}",
         # Each notice is {"key", "title", "body"}; scripts/notify.py opens at most one issue per key.
-        "notices": [],
+        "notices": notices,
     }))
 
 
