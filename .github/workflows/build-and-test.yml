@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       publish-candidate:
-        description: Export tested OCI archives for the manual publishing workflow
+        description: Export tested OCI archives for the publishing workflow
         type: boolean
         default: false
 

@@ -1,10 +1,23 @@
-name: Manual publish
+name: Publish
 
 # Attestations name this file's path and refs/heads/main. Renaming the file makes the
 # README verification command reject every custom image attested before the rename.
 
 on:
+  schedule:
+    # Off the top of the hour, when GitHub delays and drops scheduled runs.
+    - cron: '17 */6 * * *'
+    # Only re-enables this workflow. Jobs recognise it by this exact string.
+    - cron: '43 4 1 * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    # A push that changes only these files does not publish. Lock commits made with the
+    # workflow token never start a run.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'examples/**'
 
 permissions:
   contents: read
@@ -12,11 +25,14 @@ permissions:
 concurrency:
   group: publish
   cancel-in-progress: false
+  # Keep every waiting run: by default a newer run cancels the waiting one, which could
+  # drop a push that must publish.
+  queue: max
 
 jobs:
   plan:
     # Publishing and the workflow-token lock commit are restricted to main.
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event.schedule != '43 4 1 * *' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -26,26 +42,42 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Test the updater and create a manual plan
+      - name: Check out the lock file of current main
+        # A queued run's revision can predate the lock commit of the run before it, so
+        # planning against that revision's lock would publish the same inputs again.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: main
+          persist-credentials: false
+          sparse-checkout: /build-inputs.lock.json
+          sparse-checkout-cone-mode: false
+      - name: Test the updater and create the plan
         id: plan
         shell: bash
         env:
           # The updater reads upstream GitHub releases with the read-only workflow token.
           GITHUB_TOKEN: ${{ github.token }}
+          TRIGGER: ${{ github.event_name == 'schedule' && 'scheduled' || github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}
         run: |
           python3 tests/test_updater.py
           mkdir -p "$RUNNER_TEMP/plan"
-          python3 scripts/updater.py --trigger manual > "$RUNNER_TEMP/plan/plan.json"
+          lock=main/build-inputs.lock.json
+          # The lock commit checks that main's build inputs still match this lock.
+          if [ -f "$lock" ]; then
+            cp "$lock" "$RUNNER_TEMP/plan/base.lock.json"
+          fi
+          python3 scripts/updater.py --lock "$lock" --trigger "$TRIGGER" > "$RUNNER_TEMP/plan/plan.json"
           python3 - "$RUNNER_TEMP/plan/plan.json" >> "$GITHUB_OUTPUT" <<'PY'
           import json, sys
           plan = json.load(open(sys.argv[1]))
           print(f'build={str(plan["build"]).lower()}')
           PY
-      - name: Save the plan for this run
+      - name: Save the plan and the lock it started from for this run
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: publish-plan
-          path: ${{ runner.temp }}/plan/plan.json
+          path: ${{ runner.temp }}/plan/
           if-no-files-found: error
           retention-days: 1
 
@@ -291,14 +323,17 @@ jobs:
           python3 automation/scripts/commit_lock.py
           --repository current
           --plan "$RUNNER_TEMP/plan/plan.json"
-          --previous-lock automation/build-inputs.lock.json
+          --previous-lock "$RUNNER_TEMP/plan/base.lock.json"
           --result "$RUNNER_TEMP/result/published.lock.json"
 
   notify:
     # The report-only scan stays out: its findings and errors never fail a run.
     needs: [plan, build-and-test, publish, attest, verify-attestation, verify-published, commit-lock]
-    # Every finished run on main reports; a cancelled run and pull requests never touch issues.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    # Every finished publishing run on main reports; a cancelled run, pull requests and the
+    # monthly re-enable never touch issues.
+    if: >-
+      ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      && github.event.schedule != '43 4 1 * *' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -330,3 +365,18 @@ jobs:
             args+=(--plan "$RUNNER_TEMP/plan/plan.json")
           fi
           python3 scripts/notify.py --run-url "$RUN_URL" --needs "$NEEDS" "${args[@]}"
+
+  re-enable:
+    # GitHub disables scheduled workflows in public repositories after 60 days without
+    # repository activity, and does not say whether workflow-token lock commits count.
+    if: ${{ github.event.schedule == '43 4 1 * *' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Mark this workflow enabled through the GitHub API
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: gh api --method PUT "repos/$REPOSITORY/actions/workflows/publish.yml/enable"

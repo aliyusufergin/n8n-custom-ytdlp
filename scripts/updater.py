@@ -154,7 +154,7 @@ def index_digest(upstream: Upstream, repository: str, tag: str) -> str | None:
     return digest
 
 
-def n8n_version(upstream: Upstream, locked: str) -> tuple[str, list[dict]]:
+def n8n_version(upstream: Upstream, locked: str | None) -> tuple[str, list[dict]]:
     """Return the stable-track n8n version to build (ADR 0002) and any notices to raise."""
     release = json.loads(upstream.get(f"https://api.github.com/repos/{N8N_REPO}/releases/latest"))
     # Only the latest-release marker counts; n8n's prerelease flags are unreliable.
@@ -166,6 +166,9 @@ def n8n_version(upstream: Upstream, locked: str) -> tuple[str, list[dict]]:
     major = marker.split(".")[0]
     if major == STABLE_MAJOR:
         return marker, []
+    if locked is None:
+        raise UpstreamError(f"n8n's latest release is n8n {marker} and no lock file names a "
+                            f"2.x minor to follow")
     # Follow patches of the locked 2.x minor. n8n creates each n8n@X.Y.Z tag with its release,
     # and one request lists a minor's tags where the releases list needs many pages; a tag
     # whose images were never pushed is skipped like any version that is not pushed yet.
@@ -185,12 +188,15 @@ def n8n_version(upstream: Upstream, locked: str) -> tuple[str, list[dict]]:
     return f"{minor}.{max([int(patch), *patches])}", [notice]
 
 
-def resolve_n8n(upstream: Upstream, locked: dict) -> tuple[dict, list[dict]]:
+def resolve_n8n(upstream: Upstream, locked: dict | None) -> tuple[dict, list[dict]]:
     """Return the n8n lock entry with both upstream index digests, and any notices to raise."""
-    version, notices = n8n_version(upstream, locked["version"])
+    version, notices = n8n_version(upstream, None if locked is None else locked["version"])
     entry = {"version": version}
     for field, repository in N8N_IMAGES:
         if (digest := index_digest(upstream, repository, version)) is None:
+            if locked is None:
+                raise UpstreamError(f"{repository}:{version} is not pushed yet and no lock file "
+                                    f"names an n8n version to keep; a later run retries")
             if version == locked["version"]:
                 raise UpstreamError(f"{repository}:{version} of the locked n8n version no longer exists")
             # n8n usually pushes its images before it marks the release; a later run retries.
@@ -252,7 +258,7 @@ def resolve_yt_dlp(upstream: Upstream) -> dict:
     return {"tag": tag, "sha256": {name: checksums[name] for name in YT_DLP_ASSETS}}
 
 
-def resolve_ffmpeg(upstream: Upstream, locked: dict) -> dict:
+def resolve_ffmpeg(upstream: Upstream, locked: dict | None) -> dict:
     """Return the lock entry for the highest release tag of mwader/static-ffmpeg."""
     tags = json.loads(upstream.get(f"{DOCKER_HUB}/{FFMPEG_REPO}/tags/list"))["tags"]
     # latest, X.Y-N rebuilds and per-architecture tags name no release of their own.
@@ -264,7 +270,7 @@ def resolve_ffmpeg(upstream: Upstream, locked: dict) -> dict:
         raise UpstreamError(f"{FFMPEG_REPO}:{version} is listed but does not exist")
     # A digest names one immutable index, and the locked one was checked when it was locked;
     # fetching an index, unlike a HEAD request, counts against Docker Hub's pull limit.
-    if digest != locked["image_digest"]:
+    if locked is None or digest != locked["image_digest"]:
         body = upstream.get(f"{DOCKER_HUB}/{FFMPEG_REPO}/manifests/{digest}")
         if f"sha256:{hashlib.sha256(body).hexdigest()}" != digest:
             raise UpstreamError(f"{FFMPEG_REPO}:{version} index does not match its digest {digest}")
@@ -276,8 +282,10 @@ def resolve_ffmpeg(upstream: Upstream, locked: dict) -> dict:
     return {"version": version, "image_digest": digest}
 
 
-def describe_changes(lock: dict, new_lock: dict) -> list[str]:
+def describe_changes(lock: dict | None, new_lock: dict) -> list[str]:
     """Name each changed build input, e.g. "n8n 2.38.7 → 2.38.8"."""
+    if lock is None:
+        return [f"{name} {new_lock[key][field]}" for key, name, field in BUILD_INPUTS]
     changes = []
     for key, name, field in BUILD_INPUTS:
         before, after = lock[key], new_lock[key]
@@ -313,28 +321,34 @@ def main() -> None:
     args = parser.parse_args()
     try:
         lock = json.loads(args.lock.read_text())
+    except FileNotFoundError:
+        # Without a lock file every build input counts as changed.
+        lock = None
     except (OSError, ValueError) as error:
         parser.error(f"cannot read lock file: {error}")
-    try:
-        version = lock["n8n"]["version"]
-    except (KeyError, TypeError):
-        parser.error("lock file must contain an n8n version")
-    if not isinstance(version, str) or not re.fullmatch(VERSION, version):
-        parser.error("n8n version must be numeric X.Y.Z")
-    if version.split(".")[0] != STABLE_MAJOR:
-        parser.error("n8n version must remain on the major 2 stable track")
+    if lock is not None:
+        try:
+            version = lock["n8n"]["version"]
+        except (KeyError, TypeError):
+            parser.error("lock file must contain an n8n version")
+        if not isinstance(version, str) or not re.fullmatch(VERSION, version):
+            parser.error("n8n version must be numeric X.Y.Z")
+        if version.split(".")[0] != STABLE_MAJOR:
+            parser.error("n8n version must remain on the major 2 stable track")
     now = args.now if args.now is not None else datetime.now(timezone.utc)
     upstream = Upstream(args.replay, args.record)
     try:
-        n8n, notices = resolve_n8n(upstream, lock["n8n"])
-        new_lock = {**lock, "n8n": n8n, "yt_dlp": resolve_yt_dlp(upstream),
-                    "ffmpeg": resolve_ffmpeg(upstream, lock["ffmpeg"])}
+        n8n, notices = resolve_n8n(upstream, None if lock is None else lock["n8n"])
+        new_lock = {**(lock or {}), "n8n": n8n, "yt_dlp": resolve_yt_dlp(upstream),
+                    "ffmpeg": resolve_ffmpeg(upstream, None if lock is None else lock["ffmpeg"])}
     except UpstreamError as error:
         parser.exit(1, f"{parser.prog}: error: {error}\n")
     version = n8n["version"]
     major, minor, _ = version.split(".")
     changes = describe_changes(lock, new_lock)
-    if changes:
+    if lock is None:
+        build, reason, summary = True, "no lock file", ", ".join(changes)
+    elif changes:
         build, reason, summary = True, "build inputs changed", ", ".join(changes)
     elif args.trigger in ("manual", "push", "pull_request"):
         build, reason, summary = True, f"{args.trigger} trigger", f"n8n {version} rebuild"

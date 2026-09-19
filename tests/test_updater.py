@@ -439,11 +439,32 @@ class UpdaterTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertEqual(result.stdout, "")
                 self.assertIn("error:", result.stderr)
+
+    def test_missing_lock_file_resolves_every_build_input_and_plans_a_build(self) -> None:
         self.lock_path.unlink()
-        result = self.invoke("scheduled")
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("cannot read lock file", result.stderr)
+        plan = self.command("scheduled")
+        self.assertIs(plan["build"], True)
+        self.assertEqual(plan["reason"], "no lock file")
+        self.assertEqual(plan["change_summary"], "n8n 2.38.7, yt-dlp 2026.09.16.232951, ffmpeg 9.0.1")
+        self.assertEqual(plan["new_lock"],
+                         {"n8n": N8N_2_38_7, "yt_dlp": RECORDED_NIGHTLY, "ffmpeg": FFMPEG_9_0_1})
+        self.assertEqual(plan["floating_tags"], ["2", "2.38", "2.38.7"])
+        self.assertEqual(plan["build_tag"], "2.38.7-20260912-0617")
+        self.assertEqual(plan["notices"], [])
+        self.assertFalse(self.lock_path.exists())
+
+    def test_missing_lock_file_with_an_n8n_3_marker_fails_without_a_plan(self) -> None:
+        # Only a lock names the 2.x minor whose patches the custom image keeps following.
+        self.lock_path.unlink()
+        self.mark_latest("n8n@3.0.0")
+        self.assert_fails_without_plan(self.invoke("scheduled"), "no lock file names a 2.x minor")
+
+    def test_missing_lock_file_with_an_unpushed_docker_tag_fails_without_a_plan(self) -> None:
+        # Without a lock there is no n8n version to keep until a later run.
+        self.lock_path.unlink()
+        self.recorded(f"HEAD {REGISTRY}/n8nio/runners/manifests/2.38.7").write_text(json.dumps(UNKNOWN_TAG))
+        self.assert_fails_without_plan(
+            self.invoke("scheduled"), "n8nio/runners:2.38.7 is not pushed yet and no lock file")
 
 
 if __name__ == "__main__":
