@@ -133,12 +133,31 @@ The command prints one JSON object to stdout with these fields:
 | `reason` | `build inputs changed`, `<trigger> trigger` or `build inputs unchanged` |
 | `change_summary` | What the build publishes, e.g. `yt-dlp 2026.08.30.232658 → 2026.09.16.232951`, or `n8n X.Y.Z rebuild` when no build input changed; `null` without a build |
 | `new_lock` | Lock contents for the plan |
-| `floating_tags` | Exactly `X`, `X.Y`, `X.Y.Z` from the locked n8n version |
-| `build_tag` | `X.Y.Z-YYYYMMDD-HHMM` from the run's UTC time |
-| `notices` | One-off [notices](#failure-issues-and-notices), each `{"key", "title", "body"}`; currently an empty list |
+| `floating_tags` | Exactly `X`, `X.Y`, `X.Y.Z` from the planned n8n version |
+| `build_tag` | `X.Y.Z-YYYYMMDD-HHMM` from the planned n8n version and the run's UTC time |
+| `notices` | One-off [notices](#failure-issues-and-notices), each `{"key", "title", "body"}`; currently only the n8n 3.x notice |
 
-The updater resolves the yt-dlp nightly from upstream; n8n and ffmpeg are still
-taken from the lock and arrive in later slices. For yt-dlp it:
+The updater resolves n8n and the yt-dlp nightly from upstream; ffmpeg is still
+taken from the lock and arrives in a later slice.
+
+For n8n it follows the stable track
+([ADR 0002](docs/adr/0002-n8n-version-from-latest-release-marker.md)):
+
+1. reads `releases/latest` of `n8n-io/n8n`; an `n8n@2.Y.Z` marker is the planned
+   version. GitHub prerelease flags are ignored, because n8n's are unreliable;
+2. when the marker's major version is not 2, plans the highest `n8n@2.Y.Z` tag
+   on the locked `2.Y` minor, or keeps the locked version when none is newer. It
+   also raises the notice `n8n-<major>` ("n8n 3.x available"), which opens one
+   issue per major version;
+3. resolves the `n8nio/n8n` and `n8nio/runners` index digests of the planned
+   version with anonymous Docker Hub manifest HEAD requests, which don't count
+   against pull limits.
+
+A changed digest under the same version plans a build (`n8n X.Y.Z republished`).
+When either Docker tag of a planned version is not pushed yet, the run keeps the
+locked n8n entry, says so on stderr and does not fail; a later run retries.
+
+For yt-dlp it:
 
 1. reads `releases/latest` of `yt-dlp/yt-dlp-nightly-builds`;
 2. downloads that release's `SHA2-256SUMS` and `SHA2-256SUMS.sig`;
@@ -176,8 +195,10 @@ and never uses the network; a request without a recording fails the run.
 [the recordings](tests/fixtures/upstream/README.md) for the file layout.
 
 Run the offline command acceptance tests. They replay real recorded upstream
-responses, control the clock, and cover a new nightly, an unchanged nightly, a
-bad signature and a missing asset:
+responses and control the clock. For n8n they cover a stable-track update, a
+re-pushed digest, ignored prerelease flags, a Docker tag not pushed yet and a
+3.x marker with and without later 2.x patches. For yt-dlp they cover a new
+nightly, an unchanged nightly, a bad signature and a missing asset:
 
 ```sh
 python3 tests/test_updater.py
@@ -363,8 +384,8 @@ A notice in the plan opens an issue labelled `updater-notice` at most once per
 notice key, even if an earlier issue for that key was closed. The issue body
 carries the key in a hidden marker, so removing the label from a notice issue or
 the marker from its body lets that notice be raised again. Notices are raised
-whenever planning succeeded, even if a later job failed. The n8n 3.x notice will
-use this mechanism.
+whenever planning succeeded, even if a later job failed. The n8n 3.x notice
+uses this mechanism.
 
 The workflow creates both labels when it first needs them. They belong to the
 updater and are not triage labels.
