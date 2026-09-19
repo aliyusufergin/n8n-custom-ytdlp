@@ -1,5 +1,6 @@
 """Offline acceptance tests through the updater command's JSON interface."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ RECORDINGS = ROOT / "tests/fixtures/upstream"
 DOWNLOAD = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/download"
 N8N_LATEST = "https://api.github.com/repos/n8n-io/n8n/releases/latest"
 REGISTRY = "https://registry-1.docker.io/v2"
+FFMPEG_REPOSITORY = f"{REGISTRY}/mwader/static-ffmpeg"
 # What --record saves for a Docker tag that does not exist (yet).
 UNKNOWN_TAG = {"status": 404, "headers": {}}
 # The nightly that releases/latest named when the recording was made.
@@ -44,6 +46,16 @@ N8N_2_39_8: dict = {
     "image_digest": "sha256:b73045abaddb40cb4024e86eea1b1f69093501a7339f685a4cd486b7743d23ae",
     "runners_digest": "sha256:66dccaedd817cca16a20763239652363ee814a396829027155b460b9f45cd8e3",
 }
+# The highest X.Y.Z tag of mwader/static-ffmpeg and its Docker Hub index digest, as recorded.
+FFMPEG_9_0_1: dict = {
+    "version": "9.0.1",
+    "image_digest": "sha256:54e55b0cb8f672870fc38ceb2e6c411855cb3b39c505f5f3b2505ee01ed5f2b7",
+}
+FFMPEG_8_1_2: dict = {
+    "version": "8.1.2",
+    "image_digest": "sha256:33f770f812cbfc3de96c547157fc9faf8bd95a36481753439ffa761045167585",
+}
+FFMPEG_9_0_1_INDEX = f"{FFMPEG_REPOSITORY}/manifests/{FFMPEG_9_0_1['image_digest']}"
 
 
 class UpdaterTests(unittest.TestCase):
@@ -54,14 +66,16 @@ class UpdaterTests(unittest.TestCase):
         self.lock = json.loads((ROOT / "build-inputs.lock.json").read_text())
         self.lock["n8n"] = dict(N8N_2_38_7)
         self.lock["yt_dlp"] = RECORDED_NIGHTLY
+        self.lock["ffmpeg"] = FFMPEG_9_0_1
         self.lock_path.write_text(json.dumps(self.lock))
         self.upstream = Path(temporary.name) / "upstream"
         self.replay()
 
-    def replay(self, n8n: str = "n8n-2.38.7", yt_dlp: str = "yt-dlp-nightly-2026.09.16.232951") -> None:
-        """Answer upstream requests from exactly one n8n and one yt-dlp recording."""
+    def replay(self, n8n: str = "n8n-2.38.7", yt_dlp: str = "yt-dlp-nightly-2026.09.16.232951",
+               ffmpeg: str = "ffmpeg-9.0.1") -> None:
+        """Answer upstream requests from exactly one n8n, one yt-dlp and one ffmpeg recording."""
         shutil.rmtree(self.upstream, ignore_errors=True)
-        for recording in (n8n, yt_dlp):
+        for recording in (n8n, yt_dlp, ffmpeg):
             shutil.copytree(RECORDINGS / recording, self.upstream, dirs_exist_ok=True)
 
     def recorded(self, url: str, recording: Path | None = None) -> Path:
@@ -71,6 +85,25 @@ class UpdaterTests(unittest.TestCase):
         """Let the recorded latest release carry another tag, e.g. a future n8n@3.0.0."""
         latest = self.recorded(N8N_LATEST)
         latest.write_text(json.dumps({**json.loads(latest.read_bytes()), "tag_name": tag}))
+
+    def recorded_ffmpeg_index(self) -> dict:
+        """Return the recorded index of mwader/static-ffmpeg:9.0.1."""
+        return json.loads(self.recorded(FFMPEG_9_0_1_INDEX).read_bytes())
+
+    def list_ffmpeg_tags(self, *tags: str) -> None:
+        """Let the recorded tag list of mwader/static-ffmpeg also name tags."""
+        response = self.recorded(f"{FFMPEG_REPOSITORY}/tags/list")
+        tag_list = json.loads(response.read_bytes())
+        response.write_text(json.dumps({**tag_list, "tags": [*tag_list["tags"], *tags]}))
+
+    def push_ffmpeg(self, tag: str, index: dict) -> str:
+        """Let the recorded registry serve index under tag, as a push would; return its digest."""
+        body = json.dumps(index).encode()
+        digest = f"sha256:{hashlib.sha256(body).hexdigest()}"
+        self.recorded(f"HEAD {FFMPEG_REPOSITORY}/manifests/{tag}").write_text(
+            json.dumps({"status": 200, "headers": {"docker-content-digest": digest}}))
+        self.recorded(f"{FFMPEG_REPOSITORY}/manifests/{digest}").write_bytes(body)
+        return digest
 
     def assert_fails_without_plan(self, result: subprocess.CompletedProcess, message: str) -> None:
         self.assertEqual(result.returncode, 1, result.stderr)
@@ -136,6 +169,81 @@ class UpdaterTests(unittest.TestCase):
                 self.assertEqual(plan["reason"], "build inputs changed")
                 self.assertEqual(plan["change_summary"], "n8n 2.38.7 republished")
                 self.assertEqual(plan["new_lock"], {**self.lock, "n8n": N8N_2_38_7})
+
+    def test_scheduled_new_ffmpeg_version_plans_a_build(self) -> None:
+        self.lock["ffmpeg"] = FFMPEG_8_1_2
+        self.lock_path.write_text(json.dumps(self.lock))
+        plan = self.command("scheduled")
+        self.assertIs(plan["build"], True)
+        self.assertEqual(plan["reason"], "build inputs changed")
+        self.assertEqual(plan["change_summary"], "ffmpeg 8.1.2 → 9.0.1")
+        self.assertEqual(plan["new_lock"], {**self.lock, "ffmpeg": FFMPEG_9_0_1})
+        self.assertEqual(plan["floating_tags"], ["2", "2.38", "2.38.7"])
+
+    def test_changed_ffmpeg_digest_under_the_same_version_plans_a_build(self) -> None:
+        # The lock still holds the digest mwader pushed before re-pushing the same tag.
+        self.lock["ffmpeg"] = {**FFMPEG_9_0_1, "image_digest": "sha256:" + "0" * 64}
+        self.lock_path.write_text(json.dumps(self.lock))
+        plan = self.command("scheduled")
+        self.assertIs(plan["build"], True)
+        self.assertEqual(plan["reason"], "build inputs changed")
+        self.assertEqual(plan["change_summary"], "ffmpeg 9.0.1 republished")
+        self.assertEqual(plan["new_lock"], {**self.lock, "ffmpeg": FFMPEG_9_0_1})
+
+    def test_new_ffmpeg_major_is_followed_from_its_first_release(self) -> None:
+        # FFmpeg names a line's first release X.Y and its patches X.Y.Z, e.g. 9.0 before 9.0.1.
+        self.list_ffmpeg_tags("9.0.10", "10.0", "10.0-amd64", "10.0-arm64")
+        digest = self.push_ffmpeg("10.0", self.recorded_ffmpeg_index())
+        plan = self.command("scheduled")
+        self.assertIs(plan["build"], True)
+        self.assertEqual(plan["change_summary"], "ffmpeg 9.0.1 → 10.0")
+        self.assertEqual(plan["new_lock"]["ffmpeg"], {"version": "10.0", "image_digest": digest})
+        with self.subTest("its first patch release follows"):
+            self.list_ffmpeg_tags("10.0.1")
+            digest = self.push_ffmpeg("10.0.1", {**self.recorded_ffmpeg_index(), "annotations": {}})
+            plan = self.command("scheduled")
+            self.assertEqual(plan["change_summary"], "ffmpeg 9.0.1 → 10.0.1")
+            self.assertEqual(plan["new_lock"]["ffmpeg"], {"version": "10.0.1", "image_digest": digest})
+
+    def test_ffmpeg_tags_that_name_no_release_are_ignored(self) -> None:
+        # The recorded list already holds tags such as 9.0.1-arm64, 7.0-2, latest and test-latest.
+        self.list_ffmpeg_tags("11", "11.0-1", "11.0-arm64", "11.0.0-amd64", "v11.0.0", "latest-11")
+        plan = self.command("scheduled")
+        self.assertIs(plan["build"], False)
+        self.assertEqual(plan["new_lock"], self.lock)
+
+    def test_ffmpeg_index_missing_a_platform_fails_without_a_plan(self) -> None:
+        for platform in ("linux/amd64", "linux/arm64"):
+            with self.subTest(platform=platform):
+                self.replay()
+                index = self.recorded_ffmpeg_index()
+                index["manifests"] = [manifest for manifest in index["manifests"]
+                                      if manifest["platform"]["architecture"] != platform.split("/")[1]]
+                self.push_ffmpeg("9.0.1", index)
+                self.assert_fails_without_plan(
+                    self.invoke("scheduled"), f"mwader/static-ffmpeg:9.0.1 index has no {platform}")
+        with self.subTest("single-platform manifest instead of an index"):
+            self.replay()
+            self.push_ffmpeg("9.0.1", {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "config": self.recorded_ffmpeg_index()["manifests"][0],
+                "layers": [],
+            })
+            self.assert_fails_without_plan(
+                self.invoke("scheduled"), "mwader/static-ffmpeg:9.0.1 index has no linux/amd64")
+
+    def test_ffmpeg_index_that_does_not_match_its_digest_fails_without_a_plan(self) -> None:
+        self.lock["ffmpeg"] = FFMPEG_8_1_2
+        self.lock_path.write_text(json.dumps(self.lock))
+        # The same index, re-serialized, is no longer the index its digest names.
+        self.recorded(FFMPEG_9_0_1_INDEX).write_text(json.dumps(self.recorded_ffmpeg_index()))
+        self.assert_fails_without_plan(
+            self.invoke("scheduled"), "mwader/static-ffmpeg:9.0.1 index does not match its digest")
+
+    def test_listed_ffmpeg_tag_without_an_index_fails_without_a_plan(self) -> None:
+        self.recorded(f"HEAD {FFMPEG_REPOSITORY}/manifests/9.0.1").write_text(json.dumps(UNKNOWN_TAG))
+        self.assert_fails_without_plan(self.invoke("scheduled"), "mwader/static-ffmpeg:9.0.1")
 
     def test_latest_release_marker_is_followed_even_when_flagged_prerelease(self) -> None:
         self.replay(n8n="n8n-2.39.8")

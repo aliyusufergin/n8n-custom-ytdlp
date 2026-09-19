@@ -137,8 +137,8 @@ The command prints one JSON object to stdout with these fields:
 | `build_tag` | `X.Y.Z-YYYYMMDD-HHMM` from the planned n8n version and the run's UTC time |
 | `notices` | One-off [notices](#failure-issues-and-notices), each `{"key", "title", "body"}`; currently only the n8n 3.x notice |
 
-The updater resolves n8n and the yt-dlp nightly from upstream; ffmpeg is still
-taken from the lock and arrives in a later slice.
+The updater resolves every build input from upstream: n8n, the yt-dlp nightly
+and ffmpeg.
 
 For n8n it follows the stable track
 ([ADR 0002](docs/adr/0002-n8n-version-from-latest-release-marker.md)):
@@ -170,8 +170,27 @@ For yt-dlp it:
 4. records the nightly tag and the checksums of `yt-dlp_musllinux` and
    `yt-dlp_musllinux_aarch64` from that verified list.
 
-A bad signature, a missing asset or any failed request exits with status 1 and
-prints no plan, so nothing is built or published. GitHub API requests send the
+For ffmpeg it:
+
+1. lists the tags of `mwader/static-ffmpeg` from the Docker Hub registry and
+   picks the highest release tag, compared numerically, including a new major
+   version. FFmpeg names a line's first release `X.Y` and its patches `X.Y.Z`, so
+   `10.0` is followed as soon as it is published and `10.0.1` replaces it later.
+   The image tests gate a new major like any other version. Tags that name no
+   release of their own, such as `latest`, `7.0-2` or `9.0.1-arm64`, are ignored;
+2. resolves that tag's index digest with an anonymous manifest HEAD request;
+3. when the digest differs from the locked one, fetches that index by digest,
+   checks that it hashes to the digest and requires linux/amd64 and linux/arm64
+   images in it. This fetch counts against Docker Hub's pull limit, so it
+   happens only for a new digest; an unchanged digest names the index that was
+   already checked.
+
+A new version (`ffmpeg 9.0.1 → 9.1`) or a changed digest under the same
+version (`ffmpeg 9.0.1 republished`) plans a build.
+
+A bad signature, a missing asset, an ffmpeg index without both platforms or any
+failed request exits with status 1 and prints no plan, so nothing is built or
+published. GitHub API requests send the
 `GITHUB_TOKEN` environment variable when it is set, as the publishing workflow
 does, and never forward it to other hosts.
 
@@ -200,7 +219,10 @@ Run the offline command acceptance tests. They replay real recorded upstream
 responses and control the clock. For n8n they cover a stable-track update, a
 re-pushed digest, ignored prerelease flags, a Docker tag not pushed yet and a
 3.x marker with and without later 2.x patches. For yt-dlp they cover a new
-nightly, an unchanged nightly, a bad signature and a missing asset:
+nightly, an unchanged nightly, a bad signature and a missing asset. For ffmpeg
+they cover a new version, a new major version from its first `X.Y` release,
+ignored non-release tags, a re-pushed digest, an index missing a platform or not
+matching its digest, and a listed tag without an index:
 
 ```sh
 python3 tests/test_updater.py
