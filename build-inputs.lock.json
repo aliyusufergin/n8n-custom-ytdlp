@@ -16,7 +16,7 @@
     "image_digest": "sha256:54e55b0cb8f672870fc38ceb2e6c411855cb3b39c505f5f3b2505ee01ed5f2b7"
   },
   "published": {
-    "build_tag": "2.38.7-20260919-1203",
-    "image_digest": "sha256:07b1a2e1d03ab1b1c9809818e3bf6eba12461190b36c0fc033b7c31cbb637233"
+    "build_tag": "2.38.7-20260919-1300",
+    "image_digest": "sha256:b94c9d58768c756fe9915007d05a6e79fc9e41ea0bd1e7eb6bb6e4aaaf66d538"
   }
 }
