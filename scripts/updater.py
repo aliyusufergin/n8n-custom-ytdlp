@@ -3,6 +3,8 @@
 import argparse
 import base64
 from datetime import datetime, timezone
+import hashlib
+from http.client import HTTPResponse
 import json
 import os
 from pathlib import Path
@@ -25,6 +27,11 @@ N8N_IMAGES = (("image_digest", "n8nio/n8n"), ("runners_digest", "n8nio/runners")
 DOCKER_HUB = "https://registry-1.docker.io/v2"
 IMAGE_INDEX = ("application/vnd.oci.image.index.v1+json, "
                "application/vnd.docker.distribution.manifest.list.v2+json")
+FFMPEG_REPO = "mwader/static-ffmpeg"
+# FFmpeg names a line's first release X.Y and its patches X.Y.Z, e.g. 9.0 before 9.0.1.
+FFMPEG_RELEASE = r"[0-9]+\.[0-9]+(\.[0-9]+)?"
+# The custom image's platforms, each of which a copied upstream image must provide.
+PLATFORMS = ("linux/amd64", "linux/arm64")
 YT_DLP_NIGHTLY_REPO = "yt-dlp/yt-dlp-nightly-builds"
 YT_DLP_ASSETS = ("yt-dlp_musllinux", "yt-dlp_musllinux_aarch64")
 # yt-dlp's public.key, committed so that no key is ever fetched at run time.
@@ -73,7 +80,11 @@ class Upstream:
                 # Unredirected headers never follow a redirect to another host.
                 request.add_unredirected_header("Authorization", f"Bearer {token}")
         try:
-            with urlopen(request, timeout=60) as response:
+            if url.startswith(DOCKER_HUB):
+                response = self.open_registry(request)
+            else:
+                response = urlopen(request, timeout=60)
+            with response:
                 body = response.read()
         except OSError as error:
             raise UpstreamError(f"cannot fetch {url}: {error}") from error
@@ -93,30 +104,41 @@ class Upstream:
             self.save(name, json.dumps(response, indent=2).encode() + b"\n")
         return response["headers"] if response["status"] == 200 else None
 
-    @staticmethod
-    def head_manifest_live(url: str) -> dict:
-        request = Request(url, method="HEAD", headers={"Accept": IMAGE_INDEX})
+    @classmethod
+    def head_manifest_live(cls, url: str) -> dict:
         try:
-            while True:
-                try:
-                    with urlopen(request, timeout=60) as response:
-                        # Only the digest is recorded; Docker Hub's other headers name the requesting IP.
-                        digest = response.headers["Docker-Content-Digest"]
-                        return {"status": 200, "headers": {"docker-content-digest": digest}}
-                except HTTPError as error:
-                    if error.code == 404:
-                        return {"status": 404, "headers": {}}
-                    # Docker Hub asks even anonymous clients for a bearer token per repository.
-                    challenge = error.headers.get("WWW-Authenticate", "")
-                    if (error.code != 401 or not challenge.startswith("Bearer ")
-                            or request.has_header("Authorization")):
-                        raise
-                parameters = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+            with cls.open_registry(Request(url, method="HEAD")) as response:
+                # Only the digest is recorded; Docker Hub's other headers name the requesting IP.
+                digest = response.headers["Docker-Content-Digest"]
+                return {"status": 200, "headers": {"docker-content-digest": digest}}
+        except OSError as error:
+            if isinstance(error, HTTPError) and error.code == 404:
+                return {"status": 404, "headers": {}}
+            raise UpstreamError(f"cannot fetch HEAD {url}: {error}") from error
+
+    @staticmethod
+    def open_registry(request: Request) -> HTTPResponse:
+        """Open a Docker Hub registry request, adding the image index Accept header and the
+        anonymous bearer token Docker Hub asks for; the registry's own errors raise HTTPError."""
+        request.add_header("Accept", IMAGE_INDEX)
+        while True:
+            try:
+                return urlopen(request, timeout=60)
+            except HTTPError as error:
+                # Docker Hub asks even anonymous clients for a bearer token per repository.
+                challenge = error.headers.get("WWW-Authenticate", "")
+                if (error.code != 401 or not challenge.startswith("Bearer ")
+                        or request.has_header("Authorization")):
+                    raise
+            parameters = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+            try:
                 realm = parameters.pop("realm")
                 with urlopen(f"{realm}?{urlencode(parameters)}", timeout=60) as token:
                     request.add_unredirected_header("Authorization", f"Bearer {json.load(token)['token']}")
-        except (OSError, KeyError, ValueError) as error:
-            raise UpstreamError(f"cannot fetch HEAD {url}: {error}") from error
+            except (OSError, KeyError, ValueError) as error:
+                # A failed token request must never pass for a manifest that does not exist.
+                raise UpstreamError(
+                    f"cannot get a Docker Hub token for {request.full_url}: {error}") from error
 
 
 def index_digest(upstream: Upstream, repository: str, tag: str) -> str | None:
@@ -230,6 +252,30 @@ def resolve_yt_dlp(upstream: Upstream) -> dict:
     return {"tag": tag, "sha256": {name: checksums[name] for name in YT_DLP_ASSETS}}
 
 
+def resolve_ffmpeg(upstream: Upstream, locked: dict) -> dict:
+    """Return the lock entry for the highest release tag of mwader/static-ffmpeg."""
+    tags = json.loads(upstream.get(f"{DOCKER_HUB}/{FFMPEG_REPO}/tags/list"))["tags"]
+    # latest, X.Y-N rebuilds and per-architecture tags name no release of their own.
+    versions = [tag for tag in tags if isinstance(tag, str) and re.fullmatch(FFMPEG_RELEASE, tag)]
+    if not versions:
+        raise UpstreamError(f"{FFMPEG_REPO} has no X.Y or X.Y.Z release tag")
+    version = max(versions, key=lambda tag: [int(number) for number in tag.split(".")])
+    if (digest := index_digest(upstream, FFMPEG_REPO, version)) is None:
+        raise UpstreamError(f"{FFMPEG_REPO}:{version} is listed but does not exist")
+    # A digest names one immutable index, and the locked one was checked when it was locked;
+    # fetching an index, unlike a HEAD request, counts against Docker Hub's pull limit.
+    if digest != locked["image_digest"]:
+        body = upstream.get(f"{DOCKER_HUB}/{FFMPEG_REPO}/manifests/{digest}")
+        if f"sha256:{hashlib.sha256(body).hexdigest()}" != digest:
+            raise UpstreamError(f"{FFMPEG_REPO}:{version} index does not match its digest {digest}")
+        index = json.loads(body)
+        platforms = {f"{entry['platform']['os']}/{entry['platform']['architecture']}"
+                     for entry in index.get("manifests", []) if "platform" in entry}
+        if missing := [platform for platform in PLATFORMS if platform not in platforms]:
+            raise UpstreamError(f"{FFMPEG_REPO}:{version} index has no {', '.join(missing)} image")
+    return {"version": version, "image_digest": digest}
+
+
 def describe_changes(lock: dict, new_lock: dict) -> list[str]:
     """Name each changed build input, e.g. "n8n 2.38.7 → 2.38.8"."""
     changes = []
@@ -281,7 +327,8 @@ def main() -> None:
     upstream = Upstream(args.replay, args.record)
     try:
         n8n, notices = resolve_n8n(upstream, lock["n8n"])
-        new_lock = {**lock, "n8n": n8n, "yt_dlp": resolve_yt_dlp(upstream)}
+        new_lock = {**lock, "n8n": n8n, "yt_dlp": resolve_yt_dlp(upstream),
+                    "ffmpeg": resolve_ffmpeg(upstream, lock["ffmpeg"])}
     except UpstreamError as error:
         parser.exit(1, f"{parser.prog}: error: {error}\n")
     version = n8n["version"]

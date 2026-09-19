@@ -1,10 +1,10 @@
 # Recorded upstream responses
 
-Each directory is one recording of one upstream. The tests copy one n8n and one
-yt-dlp recording into a single directory for `scripts/updater.py --replay`. A
-response file is named by its URL, percent-encoded with
-`urllib.parse.quote(url, safe="")`. Response bodies are stored byte for byte as
-upstream served them.
+Each directory is one recording of one upstream. The tests copy one n8n, one
+yt-dlp and one ffmpeg recording into a single directory for
+`scripts/updater.py --replay`. A response file is named by its URL,
+percent-encoded with `urllib.parse.quote(url, safe="")`. Response bodies are
+stored byte for byte as upstream served them.
 
 A registry HEAD response has no body. Its file is named by `"HEAD " + url`,
 percent-encoded the same way, and holds `{"status": 200, "headers":
@@ -29,9 +29,14 @@ headers name the requesting IP.
   musllinux assets. Its `releases/tags/2025.08.30.232839` response is stored
   under the `releases/latest` URL; its checksum list and signature are unchanged
   and validly signed.
+- `ffmpeg-9.0.1`: the `mwader/static-ffmpeg` registry tag list on 2026-09-19,
+  whose highest release tag was `9.0.1`, with the `9.0.1` index digest and the
+  index itself. The updater fetches an index only when its digest differs from
+  the locked one, so this was recorded with `8.1.2` locked.
 
 Record a new snapshot from live upstream, then split its files into one
-directory per upstream:
+directory per upstream. Lock an older ffmpeg digest to record the ffmpeg index
+too:
 
 ```sh
 python3 scripts/updater.py --trigger scheduled --record <snapshot>
