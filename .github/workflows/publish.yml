@@ -1,5 +1,8 @@
 name: Manual publish
 
+# Attestations name this file's path and refs/heads/main. Renaming the file makes the
+# README verification command reject every custom image attested before the rename.
+
 on:
   workflow_dispatch:
 
@@ -57,6 +60,8 @@ jobs:
     needs: [plan, build-and-test]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      image-digest: ${{ steps.published.outputs.image-digest }}
     steps:
       - name: Check out the source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,6 +93,11 @@ jobs:
           path: ${{ runner.temp }}/published.lock.json
           if-no-files-found: error
           retention-days: 1
+      - name: Expose the verified custom image index digest
+        id: published
+        run: >-
+          python3 -c 'import json, sys; print("image-digest=" + json.load(open(sys.argv[1]))["published"]["image_digest"])'
+          "$RUNNER_TEMP/published.lock.json" >> "$GITHUB_OUTPUT"
 
   attest:
     needs: publish
@@ -99,16 +109,6 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Download the verified published lock
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
-        with:
-          name: published-lock
-          path: ${{ runner.temp }}/result
-      - name: Read the published custom image index digest
-        id: published
-        run: |
-          digest=$(jq -er .published.image_digest "$RUNNER_TEMP/result/published.lock.json")
-          echo "image-digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Log in to Docker Hub
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -118,13 +118,52 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: docker.io/aliyusufergin/n8n-ytdlp
-          subject-digest: ${{ steps.published.outputs.image-digest }}
+          subject-digest: ${{ needs.publish.outputs.image-digest }}
           push-to-registry: true
           # Storage records exist only for organization-owned repositories.
           create-storage-record: false
 
-  verify-published:
+  verify-attestation:
     needs: [publish, attest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Download the verified published lock
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: published-lock
+          path: ${{ runner.temp }}/result
+      - name: Run the README verification command on the custom and upstream n8n images
+        env:
+          # gh requires a token even when it reads the attestation from Docker Hub.
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          lock="$RUNNER_TEMP/result/published.lock.json"
+          build_tag=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["published"]["build_tag"])' "$lock")
+          upstream=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["n8n"]["image_digest"])' "$lock")
+          verify() {
+            gh attestation verify "oci://$1" \
+              --repo aliyusufergin/n8n-custom-ytdlp \
+              --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
+              --source-ref refs/heads/main \
+              --bundle-from-oci
+          }
+          verify "docker.io/aliyusufergin/n8n-ytdlp:$build_tag"
+          # The upstream n8n image cannot carry this workflow's attestation, so a pass means
+          # the command verifies nothing. The summary shows why it was rejected.
+          if rejection=$(verify "docker.io/n8nio/n8n@$upstream" 2>&1); then
+            echo "::error::The upstream n8n image passed attestation verification"
+            exit 1
+          fi
+          {
+            printf 'The attestation of aliyusufergin/n8n-ytdlp:%s verified from Docker Hub.\n\n' "$build_tag"
+            printf 'The same command rejected the upstream n8n image n8nio/n8n@%s:\n\n' "$upstream"
+            printf '~~~~text\n%s\n~~~~\n' "$rejection"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-published:
+    needs: publish
     name: Verify published image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
@@ -176,32 +215,6 @@ jobs:
               summary.write(f'Published {image} passed all image tests on {os.environ["ARCH"]}.\n\n')
               summary.write(f'All custom and runners tags match the published lock: {tags}\n')
           PY
-      - name: Verify the attestation with the README command
-        env:
-          # gh requires a token even when it reads the attestation from Docker Hub.
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          lock="$RUNNER_TEMP/result/published.lock.json"
-          build_tag=$(jq -er .published.build_tag "$lock")
-          upstream=$(jq -er .n8n.image_digest "$lock")
-          verify() {
-            gh attestation verify "oci://$1" \
-              --repo aliyusufergin/n8n-custom-ytdlp \
-              --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
-              --source-ref refs/heads/main \
-              --bundle-from-oci
-          }
-          verify "docker.io/aliyusufergin/n8n-ytdlp:$build_tag"
-          # An image this workflow did not build must fail the same command.
-          if verify "docker.io/n8nio/n8n@$upstream"; then
-            echo "::error::The upstream n8n image passed attestation verification"
-            exit 1
-          fi
-          {
-            printf '\nThe attestation of aliyusufergin/n8n-ytdlp:%s verified from Docker Hub.\n' "$build_tag"
-            printf 'The same command rejected the upstream image n8nio/n8n@%s.\n' "$upstream"
-          } >> "$GITHUB_STEP_SUMMARY"
 
   scan:
     needs: publish
@@ -219,23 +232,17 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
-      - name: Download the verified published lock
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - name: Check out the report script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: published-lock
-          path: ${{ runner.temp }}/result
-      - name: Read the published custom image index digest
-        id: published
-        run: |
-          digest=$(jq -er .published.image_digest "$RUNNER_TEMP/result/published.lock.json")
-          echo "image-digest=$digest" >> "$GITHUB_OUTPUT"
+          persist-credentials: false
       - name: Scan the published custom image
         id: scan
         continue-on-error: true
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           # The registry source picks this runner's platform from the published index.
-          image: registry:docker.io/aliyusufergin/n8n-ytdlp@${{ steps.published.outputs.image-digest }}
+          image: registry:docker.io/aliyusufergin/n8n-ytdlp@${{ needs.publish.outputs.image-digest }}
           grype-version: v0.119.0
           fail-build: false
           output-format: json
@@ -245,41 +252,15 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           SCAN_OUTCOME: ${{ steps.scan.outcome }}
-        run: |
-          python3 - <<'PY'
-          import collections, json, os
-          from pathlib import Path
-          report = Path(os.environ['RUNNER_TEMP']) / 'vulnerabilities.json'
-          lines = [f'## Vulnerability report ({os.environ["ARCH"]})', '',
-                   'Findings are informational: they never block publishing or fail the run.', '']
-          if os.environ['SCAN_OUTCOME'] != 'success' or not report.exists():
-              lines.append(f'The scan did not complete ({os.environ["SCAN_OUTCOME"]}); see the job log.')
-          else:
-              result = json.loads(report.read_text())
-              target = result['source']['target']
-              severities = ['Critical', 'High', 'Medium', 'Low', 'Negligible', 'Unknown']
-              matches = sorted(result['matches'], key=lambda match: (
-                  severities.index(match['vulnerability']['severity']),
-                  -match['vulnerability'].get('risk', 0)))
-              counts = collections.Counter(match['vulnerability']['severity'] for match in matches)
-              lines += [f'Grype {result["descriptor"]["version"]} scanned `{target["userInput"]}`, '
-                        f'{target["os"]}/{target["architecture"]} manifest `{target["manifestDigest"]}`.', '',
-                        ', '.join(f'{severity}: {counts[severity]}' for severity in severities
-                                  if counts[severity]) or 'No known vulnerabilities.']
-              if matches:
-                  lines += ['', '| Severity | Vulnerability | Package | Installed | Fixed in | Type |',
-                            '| --- | --- | --- | --- | --- | --- |']
-              for match in matches:
-                  vulnerability, artifact = match['vulnerability'], match['artifact']
-                  fixed = ', '.join(vulnerability['fix']['versions']) or vulnerability['fix']['state']
-                  lines.append(f'| {vulnerability["severity"]} | [{vulnerability["id"]}]({vulnerability["dataSource"]}) '
-                               f'| {artifact["name"]} | {artifact["version"]} | {fixed} | {artifact["type"]} |')
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('\n'.join(lines) + '\n')
-          PY
+        run: >-
+          python3 scripts/vulnerability_report.py
+          --arch "$ARCH"
+          --report "$RUNNER_TEMP/vulnerabilities.json"
+          --scan-outcome "$SCAN_OUTCOME"
+          >> "$GITHUB_STEP_SUMMARY"
 
   commit-lock:
-    needs: [publish, attest, verify-published]
+    needs: [publish, attest, verify-attestation, verify-published]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

@@ -228,12 +228,13 @@ suite with the plan's exact build tag. Only successful jobs upload candidates.
 The publishing job checks the archives against their test receipts and the
 attestation subjects, copies them without rebuilding, and creates a combined OCI
 image index. It reads the manifests back to verify their digests before tagging.
-The attesting job then signs that index and pushes the [attestation](#attestation)
-to Docker Hub. Two further native jobs anonymously pull the published floating
-tag, run the image suite on amd64 and arm64, check all custom and runners tag
-digests, and verify the attestation. The lock commit waits for the attestation
-and both jobs to pass. Two report-only jobs add a
-[vulnerability report](#vulnerability-report) to the run summary.
+The attesting job then signs that index and pushes its
+[Sigstore attestation](#sigstore-attestation) to Docker Hub, and a separate job
+runs the README verification command. Two further native jobs anonymously pull
+the published floating tag, run the image suite on amd64 and arm64, and check all
+custom and runners tag digests. The lock commit waits for the Sigstore
+attestation, its verification and both native jobs to pass. Two report-only jobs
+add a [vulnerability report](#vulnerability-report) to the run summary.
 
 Both `aliyusufergin/n8n-ytdlp` and `aliyusufergin/n8n-ytdlp-runners` receive the
 plan's `X`, `X.Y`, `X.Y.Z` floating tags and `X.Y.Z-YYYYMMDD-HHMM` build tag.
@@ -286,7 +287,7 @@ suite as described above. Compare the runners result with `n8n.runners_digest`
 in that lock; repeat for its minor, patch and build tags. This live verification
 is still pending until the first publishing run is approved.
 
-### Attestation
+### Sigstore attestation
 
 Each published custom image index gets a keyless, Sigstore-backed
 [GitHub artifact attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations)
@@ -321,8 +322,10 @@ The same command fails for any image this workflow did not build. For example,
 with `oci://docker.io/n8nio/n8n:2.38.7` it exits with status 1 and reports
 `no attestations found in the OCI registry`. After attesting, every publishing run
 executes both cases: the new build tag must pass, and the locked upstream n8n
-image must fail. Custom images published before attestation was added have no
-attestation and fail verification too.
+image must fail. The run summary shows why the upstream n8n image was rejected.
+Custom images published before attestation was added have no attestation and
+fail verification too. Renaming the workflow file would likewise make the
+command reject every custom image attested before the rename.
 
 ### Vulnerability report
 
@@ -330,11 +333,13 @@ Two report-only jobs scan the published custom image index by digest with
 [Grype](https://github.com/anchore/grype) through
 [`anchore/scan-action`](https://github.com/anchore/scan-action). They run on the
 native amd64 and arm64 runners, so each scans its own platform's image. The action
-is pinned to a full commit SHA and Grype to `v0.119.0`. Each job writes to the run
-summary the scanned manifest, the finding counts by severity and a table of every
-finding, sorted by severity and then Grype's risk score.
+is pinned to a full commit SHA, and the workflow pins Grype's version.
+[`scripts/vulnerability_report.py`](scripts/vulnerability_report.py) turns Grype's
+JSON output into the run summary: the scanned manifest, the finding counts by
+severity and a table of every finding, sorted by severity and then Grype's risk
+score.
 
-Findings never fail the run: the build gate is off, the scan step and both jobs
+Findings never fail the run: `fail-build` is off, the scan step and both jobs
 continue on error, and the lock commit does not wait for them. If the scan
 itself fails, the summary says so. The action's warning annotation about the
 severity cutoff is informational.
