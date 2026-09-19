@@ -228,9 +228,13 @@ suite with the plan's exact build tag. Only successful jobs upload candidates.
 The publishing job checks the archives against their test receipts and the
 attestation subjects, copies them without rebuilding, and creates a combined OCI
 image index. It reads the manifests back to verify their digests before tagging.
-Two further native jobs anonymously pull the published floating tag, run the
-image suite on amd64 and arm64, and check all custom and runners tag digests.
-The lock commit waits for both jobs to pass.
+The attesting job then signs that index and pushes its
+[Sigstore attestation](#sigstore-attestation) to Docker Hub, and a separate job
+runs the README verification command. Two further native jobs anonymously pull
+the published floating tag, run the image suite on amd64 and arm64, and check all
+custom and runners tag digests. The lock commit waits for the Sigstore
+attestation, its verification and both native jobs to pass. Two report-only jobs
+add a [vulnerability report](#vulnerability-report) to the run summary.
 
 Both `aliyusufergin/n8n-ytdlp` and `aliyusufergin/n8n-ytdlp-runners` receive the
 plan's `X`, `X.Y`, `X.Y.Z` floating tags and `X.Y.Z-YYYYMMDD-HHMM` build tag.
@@ -240,8 +244,9 @@ every runners tag is checked against that digest. Docker Hub's configured
 immutability rule protects build tags. Use a new run with a new UTC-minute build
 tag after a partial publish instead of rerunning the same plan.
 
-Only the publishing job receives `DOCKERHUB_TOKEN`, using the repository variable
-`DOCKERHUB_USERNAME=aliyusufergin`. Only the final lock-commit job has
+Only the publishing and attesting jobs receive `DOCKERHUB_TOKEN`, using the
+repository variable `DOCKERHUB_USERNAME=aliyusufergin`. Only the attesting job
+has `id-token: write` and `attestations: write`. Only the final lock-commit job has
 `contents: write`. It starts from current `main`, verifies that its build inputs
 have not changed since the tested revision, records the verified custom image
 index digest and build tag, and pushes a commit with `GITHUB_TOKEN`. The commit
@@ -254,7 +259,7 @@ Publishing runs are serialized with `cancel-in-progress: false`. A failure stops
 the remaining steps and prevents the lock commit. Registry tag updates across
 two repositories are not atomic: an interrupted publish may move some tags.
 The next successful run republishes all tags to restore pairing. This slice
-does not add schedules, push triggers or Sigstore attestations.
+does not add schedules or push triggers.
 
 For a local reproduction of the publishing candidate (Docker 29.8+ with the
 containerd image store and Buildx with OCI export support):
@@ -281,6 +286,63 @@ Use the newly committed lock and pull its upstream n8n digest before running the
 suite as described above. Compare the runners result with `n8n.runners_digest`
 in that lock; repeat for its minor, patch and build tags. This live verification
 is still pending until the first publishing run is approved.
+
+### Sigstore attestation
+
+Each published custom image index gets a keyless, Sigstore-backed
+[GitHub artifact attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations)
+of SLSA build provenance, created by [`actions/attest`](https://github.com/actions/attest).
+There is no signing key to manage: the job obtains a short-lived Sigstore
+certificate through GitHub OIDC. The certificate names this repository, the
+`.github/workflows/publish.yml` workflow and `refs/heads/main`, and the signature
+is recorded in Sigstore's public transparency log. The attestation covers the
+index digest, so every tag of that image shares it. It is pushed to Docker Hub
+beside the image and also stored by GitHub. The companion runners image is not
+attested.
+
+Verify a published custom image with [GitHub CLI](https://cli.github.com/) 2.68
+or later. `gh` requires a GitHub login (`gh auth login`), even though this
+command reads the attestation from Docker Hub:
+
+```sh
+gh attestation verify oci://docker.io/aliyusufergin/n8n-ytdlp:2 \
+  --repo aliyusufergin/n8n-custom-ytdlp \
+  --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
+  --source-ref refs/heads/main \
+  --bundle-from-oci
+```
+
+Any tag works in place of `2`. The command resolves the tag to its digest, then
+checks the Sigstore signature, the transparency log entry and the certificate's
+workflow identity. It exits with status 0 only when an attestation from this
+workflow on `main` covers exactly that digest. Without `--bundle-from-oci`, it
+fetches the attestation from GitHub instead of Docker Hub.
+
+The same command fails for any image this workflow did not build. For example,
+with `oci://docker.io/n8nio/n8n:2.38.7` it exits with status 1 and reports
+`no attestations found in the OCI registry`. After attesting, every publishing run
+executes both cases: the new build tag must pass, and the locked upstream n8n
+image must fail. The run summary shows why the upstream n8n image was rejected.
+Custom images published before attestation was added have no attestation and
+fail verification too. Renaming the workflow file would likewise make the
+command reject every custom image attested before the rename.
+
+### Vulnerability report
+
+Two report-only jobs scan the published custom image index by digest with
+[Grype](https://github.com/anchore/grype) through
+[`anchore/scan-action`](https://github.com/anchore/scan-action). They run on the
+native amd64 and arm64 runners, so each scans its own platform's image. The action
+is pinned to a full commit SHA, and the workflow pins Grype's version.
+[`scripts/vulnerability_report.py`](scripts/vulnerability_report.py) turns Grype's
+JSON output into the run summary: the scanned manifest, the finding counts by
+severity and a table of every finding, sorted by severity and then Grype's risk
+score.
+
+Findings never fail the run: `fail-build` is off, the scan step and both jobs
+continue on error, and neither the lock commit nor the failure issue waits for
+them. If the scan itself fails, the summary says so. The action's warning
+annotation about the severity cutoff is informational.
 
 ## Failure issues and notices
 
