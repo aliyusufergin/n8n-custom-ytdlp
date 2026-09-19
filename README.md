@@ -1,15 +1,368 @@
 # n8n-custom-ytdlp
 
-Custom [n8n](https://n8n.io/) image bundled with [yt-dlp](https://github.com/yt-dlp/yt-dlp), so workflows can download and process media directly.
+The custom image `aliyusufergin/n8n-ytdlp` is the official [n8n](https://n8n.io/)
+2.x image with the [yt-dlp](https://github.com/yt-dlp/yt-dlp) nightly, ffmpeg and
+ffprobe added, so n8n workflows can download and process media. It follows n8n's
+stable track, runs on linux/amd64 and linux/arm64, and leaves n8n's own behaviour
+unchanged.
+
+A deployment adopts it by changing only the `image:` line of its Compose file.
+Whether workflows may run shell commands stays each deployment's decision.
+
+This README starts with what deployments need. [Maintaining this
+repository](#maintaining-this-repository) covers how the custom image is built,
+tested and published.
 
 ## Status
 
-The custom image can be built and tested locally and on pull requests, natively
-on amd64 and arm64. A maintainer can publish through the manual workflow after
-merge and approval of its first run. Failed publishing runs are reported as a
-GitHub Issue. Scheduled upstream tracking comes later.
+Custom images are published on
+[Docker Hub](https://hub.docker.com/r/aliyusufergin/n8n-ytdlp). Publishing runs
+are still started by hand, so floating tags move only when the maintainer starts
+one. Scheduled upstream tracking comes later.
 
-## Build and test locally
+## What the custom image adds
+
+The custom image is the upstream n8n image of n8n's stable track, plus:
+
+- **The yt-dlp nightly** as `yt-dlp` on the `PATH`. It is yt-dlp's single-file
+  musllinux build, which bundles Python and yt-dlp's optional modules: browser
+  impersonation (curl_cffi), websockets, brotli, encrypted HLS (pycryptodomex),
+  metadata and thumbnail embedding (mutagen), and yt-dlp-ejs for YouTube's
+  JavaScript challenges. The build checks the binary against yt-dlp's signed
+  checksum list.
+- **ffmpeg and ffprobe** on the `PATH`, static builds from
+  [`mwader/static-ffmpeg`](https://github.com/wader/static-ffmpeg). yt-dlp uses
+  them to merge separate video and audio, convert audio and embed metadata.
+- **`/etc/yt-dlp.conf`** with a single option, `--js-runtimes node`. yt-dlp then
+  solves YouTube's JavaScript challenges with the Node.js that n8n already ships,
+  without extra flags.
+- **The n8n files folder** `/home/node/.n8n-files`, empty and owned by `node`.
+- **Labels** that record every build input and the build tag; see
+  [Verify a custom image](#verify-a-custom-image).
+
+The tools are owned by root and run as `node`, n8n's user, from the Execute
+Command node.
+
+## What it leaves out, and why
+
+- **Execute Command stays disabled.** The custom image doesn't set
+  `NODES_EXCLUDE`, so n8n 2.x's default still excludes the Execute Command node.
+  Pulling an image must never loosen n8n's security defaults for everyone who
+  uses it, so enabling shell access is a deployment setting
+  ([ADR 0001](docs/adr/0001-execute-command-enabled-by-deployments.md)). See
+  [Enable Execute Command](#enable-execute-command).
+- **n8n's container contract is unchanged.** The user `node`, working directory,
+  entrypoint, command, exposed port and environment match the upstream n8n image.
+  No `VOLUME` or `HEALTHCHECK` is added. Existing data, encryption keys,
+  databases and credentials keep working.
+- **No package manager and no extra runtime.** The upstream n8n image ships
+  without a package manager, and the custom image doesn't restore one or add
+  Python, Deno or glibc. yt-dlp brings its own Python, ffmpeg is static and
+  yt-dlp uses n8n's Node.js, so none of them is needed.
+- **No yt-dlp defaults besides the JavaScript runtime.** Formats, output
+  templates and every other option stay each workflow's decision.
+- **No other tools.** No `ffplay`, PO token providers, AtomicParsley, aria2c,
+  PhantomJS or rtmpdump. yt-dlp treats all of them as optional.
+- **Only n8n's stable track, major version 2.** No n8n betas or 3.x, no
+  rebuilds of older 2.x versions, and no `-pc` variants, which n8n reserves for
+  n8n Cloud.
+- **The companion runners image is not modified.**
+  `aliyusufergin/n8n-ytdlp-runners` is an unmodified copy of `n8nio/runners`,
+  without yt-dlp or ffmpeg. See external task runners in the
+  [deployment checklist](#deployment-checklist).
+
+## Use the custom image
+
+Change only the image of the n8n service:
+
+```yaml
+services:
+  n8n:
+    image: aliyusufergin/n8n-ytdlp:2
+```
+
+- Keep the existing volumes and environment. n8n's data folder, encryption key,
+  database and credentials keep working.
+- Pull anonymously; no registry login or token is needed.
+- The same tag works on amd64 and arm64 hosts.
+- Choose the tag in [Tags](#tags). Its n8n version should not be older than the
+  one the deployment runs now: a database that a newer n8n has migrated may not
+  work with an older one.
+
+The generic [example Compose file](examples/compose.yaml) shows a complete n8n
+service with the custom image, the Execute Command setting, and named volumes for
+n8n's data and the n8n files folder. It contains no host-specific values; adapt it
+to your deployment.
+
+### Enable Execute Command
+
+Workflows run yt-dlp, ffmpeg and ffprobe through n8n's Execute Command node,
+which n8n 2.x excludes by default. Enable it in the deployment's Compose file with
+this exact setting from the [example Compose file](examples/compose.yaml):
+
+```yaml
+services:
+  n8n:
+    environment:
+      NODES_EXCLUDE: '["n8n-nodes-base.localFileTrigger"]'
+```
+
+The value replaces n8n's default list,
+`["n8n-nodes-base.executeCommand","n8n-nodes-base.localFileTrigger"]`. Execute
+Command becomes available and Local File Trigger stays excluded. The image tests
+run their workflow with this value.
+
+> [!WARNING]
+> n8n reads invalid JSON in `NODES_EXCLUDE` as an empty list, which **enables
+> every node**, Local File Trigger included. Keep the single quotes so that YAML
+> passes the JSON through unchanged, and check the value n8n receives:
+>
+> ```sh
+> docker compose exec n8n node -e 'console.log(JSON.parse(process.env.NODES_EXCLUDE))'
+> ```
+>
+> It prints `[ 'n8n-nodes-base.localFileTrigger' ]`, or fails with a
+> `SyntaxError` when the JSON is invalid.
+
+Execute Command runs any shell command as `node` inside the n8n container. The
+command sees the container's environment variables, such as `N8N_ENCRYPTION_KEY`
+or database passwords when they are set there. Everyone who can edit workflows
+can use it, so decide who may.
+
+### Deployment checklist
+
+- [ ] **Execute Command:** set `NODES_EXCLUDE` as
+  [shown above](#enable-execute-command) on every n8n container that runs
+  workflows.
+- [ ] **Upgrading from n8n 1.x:** 2.x is a major upgrade with breaking changes.
+  Read n8n's [2.0 breaking changes](https://docs.n8n.io/changelog/v20-breaking-changes)
+  and back up n8n's data folder and database before n8n 2.x first starts.
+- [ ] **Queue mode:** run the main instance and every worker with the same
+  custom image tag and the same `NODES_EXCLUDE`. Workers run workflow
+  executions, so Execute Command runs yt-dlp there. Manual executions stay on the
+  main instance unless `OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS` is `true`
+  ([Execute Command docs](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.executecommand)).
+  Files that a command writes stay in the container that ran it.
+- [ ] **External task runners:** with `N8N_RUNNERS_MODE=external`, run the
+  companion runners image `aliyusufergin/n8n-ytdlp-runners` under the same tag
+  as the custom image. n8n requires the runners version to match its own
+  ([task runner docs](https://docs.n8n.io/deploy/host-n8n/configure-n8n/set-up-task-runners)),
+  and both images carry the same tags. Code nodes run in the runners container
+  and find no yt-dlp or ffmpeg there. Execute Command runs in the n8n container,
+  which has them.
+- [ ] **Volumes:** keep n8n's data folder `/home/node/.n8n` on its existing
+  volume; it holds the encryption key and, by default, the SQLite database and
+  binary data. Mount a volume on the n8n files folder `/home/node/.n8n-files` to
+  keep downloads when the container is recreated. Read/Write Files from Disk may
+  only access this folder by default, so let commands write there. A fresh named
+  volume starts owned by `node`; a bind mount must be writable by UID 1000.
+- [ ] **Temporary directory:** yt-dlp's single-file build unpacks itself into the
+  temporary directory on every run: `$TMPDIR`, or `/tmp` when that is unset. The
+  directory must be writable by `node` and allow executing files. The image's own
+  `/tmp` works. With a read-only root filesystem (`read_only: true`) or a
+  `noexec` `/tmp`, mount an executable tmpfs, because Docker mounts tmpfs
+  `noexec` unless told otherwise:
+
+  ```yaml
+  services:
+    n8n:
+      tmpfs:
+        - /tmp:exec
+  ```
+
+  Otherwise yt-dlp fails with `[PYI-1:ERROR] Could not create temporary
+  directory!` when the directory isn't writable, or `Error loading shared library
+  libz.so.1: Operation not permitted` when it isn't executable. To keep `/tmp`
+  `noexec`, point `TMPDIR` at another writable, executable directory.
+- [ ] **Updates and rollback:** the floating tag `2` changes almost daily, and
+  n8n's database migrations can make a rollback impossible. Back up and
+  [choose a tag](#choosing-a-tag) that matches your risk tolerance.
+
+## Tags
+
+The custom image `aliyusufergin/n8n-ytdlp` and the companion runners image
+`aliyusufergin/n8n-ytdlp-runners` carry the same tags. Each tag names one image
+for both linux/amd64 and linux/arm64.
+
+| Tag | Example | Points to |
+| --- | --- | --- |
+| `2` | `2` | The newest custom image of n8n's stable track, while its major version is 2 |
+| `2.Y` | `2.38` | The newest custom image of that n8n minor |
+| `2.Y.Z` | `2.38.7` | The newest custom image of that n8n version |
+| `2.Y.Z-YYYYMMDD-HHMM` | `2.38.7-20260919-1300` | Exactly one custom image, built at that UTC minute |
+
+- **Floating tags** (`2`, `2.Y`, `2.Y.Z`) move to each new custom image. A new
+  one is published when any build input changes: a new n8n version on the stable
+  track, a new yt-dlp nightly, a new ffmpeg release, or an upstream image
+  re-pushed under the same version. Floating tags move only after the new image
+  passed every blocking test on both architectures.
+- **Build tags** (`2.Y.Z-YYYYMMDD-HHMM`) never move, and Docker Hub refuses to
+  overwrite them. Use one to pin a known-good image or to roll back.
+- **There is no `latest` tag.** An image reference without a tag fails to pull,
+  so nobody follows a line by accident.
+- **Only the current stable-track version is rebuilt.** When n8n's stable track
+  moves on, for example from 2.38.7 to 2.38.8 or to 2.39, older floating tags
+  such as `2.38.7` and `2.38` stay on their last custom image and get no newer
+  yt-dlp or ffmpeg. n8n's stable track usually moves to a new minor every week.
+- **No n8n betas, no 3.x.** No tag contains an n8n beta, and `2` never moves to
+  n8n 3.x. When n8n marks a 3.x release as its latest, the custom image keeps
+  following patches of its current 2.x minor while n8n publishes them, then stays
+  on the last one.
+
+### Choosing a tag
+
+| Tag | Receives | Until |
+| --- | --- | --- |
+| `2` | Every n8n 2.x stable-track version, yt-dlp nightly and ffmpeg release | n8n stops publishing 2.x patches |
+| `2.Y` | Patches of one n8n minor, plus new yt-dlp and ffmpeg | The stable track moves to the next minor, usually within about a week |
+| `2.Y.Z` | New yt-dlp and ffmpeg for one n8n version | n8n publishes the next stable-track patch, often within days |
+| Build tag | Nothing: one fixed image | — |
+
+Old yt-dlp builds stop working on YouTube quickly. A tag that no longer receives
+updates freezes yt-dlp too, so pinning `2.Y`, `2.Y.Z` or a build tag trades
+working YouTube downloads for a fixed n8n version.
+
+Automatic updaters such as Watchtower or Dockhand check the floating tag on their
+own schedule and recreate the container each time it has moved.
+
+> [!WARNING]
+> The floating tag `2` changes almost daily: n8n publishes stable-track patches
+> almost daily, and yt-dlp publishes several nightlies a week. n8n migrates its
+> database when a new version first starts, and a migrated database may not work
+> with the previous version, so rolling back can be impossible. Back up n8n's data
+> folder and database regularly, and before updates where you can. Choose the tag
+> that matches your risk tolerance.
+
+To roll back, pin the build tag the deployment ran before and restore the backup
+taken before the update. Note the build tag of a running container with:
+
+```sh
+docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' <container>
+```
+
+Each publishing commit in this repository's history names its build tag too.
+
+## Verify a custom image
+
+### Sigstore attestation
+
+Each published custom image index gets a keyless, Sigstore-backed
+[GitHub artifact attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations)
+of SLSA build provenance, created by [`actions/attest`](https://github.com/actions/attest).
+There is no signing key to manage: the publishing workflow obtains a short-lived
+Sigstore certificate through GitHub OIDC. The certificate names this repository, the
+`.github/workflows/publish.yml` workflow and `refs/heads/main`, and the signature
+is recorded in Sigstore's public transparency log. The attestation covers the
+index digest, so every tag of that image shares it. It is pushed to Docker Hub
+beside the image and also stored by GitHub. The companion runners image is not
+attested.
+
+Verify a published custom image with [GitHub CLI](https://cli.github.com/) 2.68
+or later. `gh` requires a GitHub login (`gh auth login`), even though this
+command reads the attestation from Docker Hub:
+
+```sh
+gh attestation verify oci://docker.io/aliyusufergin/n8n-ytdlp:2 \
+  --repo aliyusufergin/n8n-custom-ytdlp \
+  --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
+  --source-ref refs/heads/main \
+  --bundle-from-oci
+```
+
+Any tag works in place of `2`. The command resolves the tag to its digest, then
+checks the Sigstore signature, the transparency log entry and the certificate's
+workflow identity. It exits with status 0 only when an attestation from this
+workflow on `main` covers exactly that digest. Without `--bundle-from-oci`, it
+fetches the attestation from GitHub instead of Docker Hub.
+
+The same command fails for any image this workflow did not build. For example,
+with `oci://docker.io/n8nio/n8n:2.38.7` it exits with status 1 and reports
+`no attestations found in the OCI registry`. After attesting, every publishing run
+executes both cases: the new build tag must pass, and the locked upstream n8n
+image must fail. The run summary shows why the upstream n8n image was rejected.
+Custom images published before attestation was added, the build tags
+`2.38.7-20260913-1644` and `2.38.7-20260919-1203`, have no attestation and fail
+verification too. Renaming the workflow file would likewise make the
+command reject every custom image attested before the rename.
+
+### Build inputs, provenance and SBOM
+
+Every custom image records its build inputs in labels:
+
+```sh
+docker image inspect --format '{{json .Config.Labels}}' aliyusufergin/n8n-ytdlp:2
+```
+
+The `io.github.aliyusufergin.n8n-ytdlp.*` labels name the build tag, the n8n
+version and upstream n8n image digest, the companion runners image digest, the
+yt-dlp nightly tag and checksums, and the ffmpeg version and digest. The standard
+`org.opencontainers.image.*` labels add the source repository, revision, creation
+time and version, which is the build tag.
+
+Each platform image also carries BuildKit provenance and an SBOM:
+
+```sh
+docker buildx imagetools inspect aliyusufergin/n8n-ytdlp:2 --format '{{json .Provenance}}'
+docker buildx imagetools inspect aliyusufergin/n8n-ytdlp:2 --format '{{json .SBOM}}'
+```
+
+Each publishing run adds a [vulnerability report](#vulnerability-report) to its
+run summary in
+[GitHub Actions](https://github.com/aliyusufergin/n8n-custom-ytdlp/actions/workflows/publish.yml).
+Findings never block publishing.
+
+## yt-dlp updates
+
+yt-dlp updates arrive in newer custom images, not through yt-dlp's self-update.
+Each new yt-dlp nightly produces a new custom image under the current floating
+tags, so pulling the deployment's tag again, for example with
+`docker compose pull && docker compose up -d`, brings the newest yt-dlp.
+
+Don't update yt-dlp inside a container. The binary is owned by root, so
+`yt-dlp -U` running as `node` cannot replace it and fails with
+`ERROR: Insufficient permissions to write to /usr/local/bin/yt-dlp`. Any change
+inside a container is lost when the container is recreated anyway.
+
+If YouTube downloads start failing, check that the deployment's tag still
+receives updates; see [Choosing a tag](#choosing-a-tag).
+
+## Licenses
+
+These notes summarize the licenses of the software that the custom image
+redistributes. They are not legal advice; the linked license texts apply.
+
+- **n8n**, in the custom image and in the companion runners image, is under
+  n8n's [Sustainable Use License](https://github.com/n8n-io/n8n/blob/master/LICENSE.md).
+  Files with `.ee.` in their name or `.ee` in their directory name need an n8n
+  Enterprise License instead. The Sustainable Use License says: "You may use or
+  modify the software only for your own internal business purposes or for
+  non-commercial or personal use. You may distribute the software or provide it
+  to others only if you do so free of charge for non-commercial purposes." The
+  custom image is published free of charge, and these terms apply to every
+  deployment that runs it.
+- **yt-dlp** is under the [Unlicense](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE).
+  Its single-file builds, which the custom image uses, include GPLv3+ licensed
+  code, so yt-dlp licenses each such binary as a whole under
+  [GPLv3+](https://www.gnu.org/licenses/gpl-3.0.html). See yt-dlp's
+  [licensing notes](https://github.com/yt-dlp/yt-dlp#licensing) and
+  [third-party licenses](https://github.com/yt-dlp/yt-dlp/blob/master/THIRD_PARTY_LICENSES.txt).
+  Each [nightly release](https://github.com/yt-dlp/yt-dlp-nightly-builds/releases)
+  names the yt-dlp commit it was built from; the image's `yt-dlp.tag` label names
+  the release.
+- **ffmpeg and ffprobe** from [`mwader/static-ffmpeg`](https://github.com/wader/static-ffmpeg)
+  are built with `--enable-gpl --enable-version3`, so they are licensed under the
+  GNU GPL version 3 or later; `ffmpeg -L` prints the notice. They statically link
+  third-party libraries under their own licenses, which that project's build
+  recipe lists. See FFmpeg's [license and legal notes](https://www.ffmpeg.org/legal.html).
+  The image's `ffmpeg.version` label names the FFmpeg release, whose source is
+  available from [ffmpeg.org](https://ffmpeg.org/download.html).
+
+## Maintaining this repository
+
+The rest of this README is for maintainers: how the custom image is built,
+tested and published.
+
+### Build and test locally
 
 Requires Python 3.10+ and Docker with Buildx, Compose v2+ and a running Linux Docker daemon.
 From this checkout, run:
@@ -45,27 +398,18 @@ The suite also needs the locked upstream n8n image locally to compare the
 container contract; the build command pulls it, or pull it by its locked digest
 before testing a separately supplied candidate.
 
-The image adds yt-dlp, ffmpeg and ffprobe, enables Node.js in `/etc/yt-dlp.conf`,
-and creates the empty n8n files folder `/home/node/.n8n-files` owned by `node`.
-It preserves upstream n8n's startup and settings. Execute Command remains
-disabled by default. The generic [example Compose file](examples/compose.yaml)
-is the source of the `NODES_EXCLUDE` deployment setting that enables Execute
-Command while keeping only Local File Trigger excluded. Copy that setting into
-your service, or adapt the example, which also persists n8n data and the n8n files
-folder in named volumes.
-
-Before the first approved publishing run, try the example with a locally built image:
+To try the [example Compose file](examples/compose.yaml) with a local build before
+publishing it, tag the build under the example's image name:
 
 ```sh
 docker tag n8n-ytdlp:local aliyusufergin/n8n-ytdlp:2
 docker compose -f examples/compose.yaml up -d
 ```
 
-Keep the JSON valid: n8n treats invalid JSON in `NODES_EXCLUDE` as an empty list,
-which enables every node.
-
+The example Compose file is the source of the `NODES_EXCLUDE` deployment setting.
 The workflow acceptance test reads that setting with `docker compose config`,
-imports [a fixture workflow](tests/fixtures/media-workflow.json) using
+checks that [Enable Execute Command](#enable-execute-command) shows the same
+line, imports [a fixture workflow](tests/fixtures/media-workflow.json) using
 `import:workflow`, and runs it with `execute --id`. Its Execute Command node runs
 yt-dlp and ffmpeg as `node`, generates audio in the n8n files folder, and passes
 it to Read/Write Files from Disk. The test checks the successful execution and
@@ -85,7 +429,7 @@ The already-loaded-image command accepts `--youtube-network none` too. This
 only disables the YouTube test container's network; blocking tests always run
 without external network access.
 
-## Locked build inputs
+### Locked build inputs
 
 The JSON lock records n8n's version and image index digest, the matching runners
 index digest, the yt-dlp nightly tag and both musllinux asset checksums, and
@@ -93,9 +437,9 @@ ffmpeg's version and multi-architecture digest. Docker selects the image for the
 host architecture; the recipe selects and verifies the corresponding yt-dlp asset.
 Build arguments contain only public metadata.
 
-The seed's `published.build_tag` and `published.image_digest` are `null` until
-the first successful publish fills these fields. Local builds generate a UTC
-build tag for their image labels and leave the committed lock unchanged.
+`published.build_tag` and `published.image_digest` record the last successful
+publish; they were `null` in the seed. Local builds generate a UTC build tag for
+their image labels and leave the committed lock unchanged.
 
 The seed was resolved from upstream on 2026-09-12:
 
@@ -115,7 +459,7 @@ The seed was resolved from upstream on 2026-09-12:
 All three upstream image indexes were checked to include linux/amd64 and
 linux/arm64.
 
-## Updater planning
+### Updater planning
 
 Run the planner locally or in CI with Python 3, its standard library and `gpgv`
 (GnuPG's signature verifier):
@@ -228,7 +572,7 @@ matching its digest, and a listed tag without an index:
 python3 tests/test_updater.py
 ```
 
-## Pull-request checks
+### Pull-request checks
 
 Every pull request also runs the offline updater command suite in a separate job.
 
@@ -255,11 +599,10 @@ credentials. They do not log in to registries, push images, attest, commit, or
 open issues. Buildx's default provenance attestations are disabled for these
 checks. The checkout action is pinned to a full commit SHA.
 
-## Manual publishing
+### Manual publishing
 
 The [Manual publish workflow](.github/workflows/publish.yml) accepts only
-`workflow_dispatch` on `main`. After merge, the first run requires the maintainer's
-explicit approval. A maintainer can then start it from Actions or with:
+`workflow_dispatch` on `main`. A maintainer starts it from Actions or with:
 
 ```sh
 gh workflow run publish.yml --ref main
@@ -319,7 +662,8 @@ test receipt is written beside the archive as `image.json`. Neither command
 publishes or changes the repository lock. Standard local and PR builds retain
 their existing behavior.
 
-After the approved first run, verify anonymously on native amd64 and arm64 hosts:
+The two native verification jobs repeat this check after every publish. To repeat
+it by hand, verify anonymously on native amd64 and arm64 hosts:
 
 ```sh
 docker pull aliyusufergin/n8n-ytdlp:2
@@ -329,50 +673,9 @@ regctl image digest aliyusufergin/n8n-ytdlp-runners:2
 
 Use the newly committed lock and pull its upstream n8n digest before running the
 suite as described above. Compare the runners result with `n8n.runners_digest`
-in that lock; repeat for its minor, patch and build tags. This live verification
-is still pending until the first publishing run is approved.
+in that lock; repeat for its minor, patch and build tags.
 
-### Sigstore attestation
-
-Each published custom image index gets a keyless, Sigstore-backed
-[GitHub artifact attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations)
-of SLSA build provenance, created by [`actions/attest`](https://github.com/actions/attest).
-There is no signing key to manage: the job obtains a short-lived Sigstore
-certificate through GitHub OIDC. The certificate names this repository, the
-`.github/workflows/publish.yml` workflow and `refs/heads/main`, and the signature
-is recorded in Sigstore's public transparency log. The attestation covers the
-index digest, so every tag of that image shares it. It is pushed to Docker Hub
-beside the image and also stored by GitHub. The companion runners image is not
-attested.
-
-Verify a published custom image with [GitHub CLI](https://cli.github.com/) 2.68
-or later. `gh` requires a GitHub login (`gh auth login`), even though this
-command reads the attestation from Docker Hub:
-
-```sh
-gh attestation verify oci://docker.io/aliyusufergin/n8n-ytdlp:2 \
-  --repo aliyusufergin/n8n-custom-ytdlp \
-  --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
-  --source-ref refs/heads/main \
-  --bundle-from-oci
-```
-
-Any tag works in place of `2`. The command resolves the tag to its digest, then
-checks the Sigstore signature, the transparency log entry and the certificate's
-workflow identity. It exits with status 0 only when an attestation from this
-workflow on `main` covers exactly that digest. Without `--bundle-from-oci`, it
-fetches the attestation from GitHub instead of Docker Hub.
-
-The same command fails for any image this workflow did not build. For example,
-with `oci://docker.io/n8nio/n8n:2.38.7` it exits with status 1 and reports
-`no attestations found in the OCI registry`. After attesting, every publishing run
-executes both cases: the new build tag must pass, and the locked upstream n8n
-image must fail. The run summary shows why the upstream n8n image was rejected.
-Custom images published before attestation was added have no attestation and
-fail verification too. Renaming the workflow file would likewise make the
-command reject every custom image attested before the rename.
-
-### Vulnerability report
+#### Vulnerability report
 
 Two report-only jobs scan the published custom image index by digest with
 [Grype](https://github.com/anchore/grype) through
@@ -389,7 +692,7 @@ continue on error, and neither the lock commit nor the failure issue waits for
 them. If the scan itself fails, the summary says so. The action's warning
 annotation about the severity cutoff is informational.
 
-## Failure issues and notices
+### Failure issues and notices
 
 The publishing workflow's last job reports every finished run on `main` through
 GitHub Issues. It is the only job with `issues: write`, and it calls
