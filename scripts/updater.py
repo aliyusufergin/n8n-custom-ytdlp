@@ -180,6 +180,7 @@ def main() -> None:
         "new_lock": new_lock,
         "floating_tags": [major, f"{major}.{minor}", version],
         "build_tag": f"{version}-{now.year:04d}{now.month:02d}{now.day:02d}-{now:%H%M}",
+        # Each notice is {"key", "title", "body"}; scripts/notify.py opens one issue per key, ever.
         "notices": [],
     }))
 

@@ -177,3 +177,36 @@ jobs:
           --plan "$RUNNER_TEMP/plan/plan.json"
           --previous-lock automation/build-inputs.lock.json
           --result "$RUNNER_TEMP/result/published.lock.json"
+
+  notify:
+    needs: [plan, build-and-test, publish, verify-published, commit-lock]
+    # Every finished run on main reports; a cancelled run and pull requests never touch issues.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the notification script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the plan
+        if: ${{ needs.plan.result == 'success' }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: publish-plan
+          path: ${{ runner.temp }}/plan
+      - name: Open, update or close the failure issue and raise the plan's notices
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NEEDS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          args=()
+          if [ -f "$RUNNER_TEMP/plan/plan.json" ]; then
+            args+=(--plan "$RUNNER_TEMP/plan/plan.json")
+          fi
+          python3 scripts/notify.py --run-url "$RUN_URL" --needs "$NEEDS" "${args[@]}"

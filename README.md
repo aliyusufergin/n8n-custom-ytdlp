@@ -6,7 +6,8 @@ Custom [n8n](https://n8n.io/) image bundled with [yt-dlp](https://github.com/yt-
 
 The custom image can be built and tested locally and on pull requests, natively
 on amd64 and arm64. A maintainer can publish through the manual workflow after
-merge and approval of its first run. Scheduled upstream tracking comes later.
+merge and approval of its first run. Failed publishing runs are reported as a
+GitHub Issue. Scheduled upstream tracking comes later.
 
 ## Build and test locally
 
@@ -134,7 +135,7 @@ The command prints one JSON object to stdout with these fields:
 | `new_lock` | Lock contents for the plan |
 | `floating_tags` | Exactly `X`, `X.Y`, `X.Y.Z` from the locked n8n version |
 | `build_tag` | `X.Y.Z-YYYYMMDD-HHMM` from the run's UTC time |
-| `notices` | Notices to raise; currently an empty list |
+| `notices` | One-off [notices](#failure-issues-and-notices), each `{"key", "title", "body"}`; currently an empty list |
 
 The updater resolves the yt-dlp nightly from upstream; n8n and ffmpeg are still
 taken from the lock and arrive in later slices. For yt-dlp it:
@@ -253,7 +254,7 @@ Publishing runs are serialized with `cancel-in-progress: false`. A failure stops
 the remaining steps and prevents the lock commit. Registry tag updates across
 two repositories are not atomic: an interrupted publish may move some tags.
 The next successful run republishes all tags to restore pairing. This slice
-does not add schedules, push triggers, Sigstore attestations or failure issues.
+does not add schedules, push triggers or Sigstore attestations.
 
 For a local reproduction of the publishing candidate (Docker 29.8+ with the
 containerd image store and Buildx with OCI export support):
@@ -280,3 +281,28 @@ Use the newly committed lock and pull its upstream n8n digest before running the
 suite as described above. Compare the runners result with `n8n.runners_digest`
 in that lock; repeat for its minor, patch and build tags. This live verification
 is still pending until the first publishing run is approved.
+
+## Failure issues and notices
+
+The publishing workflow's last job reports every finished run on `main` through
+GitHub Issues. It is the only job with `issues: write`, and it calls
+[`scripts/notify.py`](scripts/notify.py), which uses the gh CLI with the workflow
+token. Pull-request runs, runs on other branches and cancelled runs never open,
+comment on or close issues.
+
+- A run with a failed or timed-out job opens an issue labelled `updater-failure`
+  that links to the run and names the failed jobs.
+- While that issue is open, each later failed run comments on it with its run
+  link instead of opening another issue.
+- The next successful run, whether or not it published, comments on the issue
+  and closes it.
+
+A notice in the plan opens an issue labelled `updater-notice` at most once per
+notice key, even if an earlier issue for that key was closed. The issue body
+carries the key in a hidden marker, so removing the label from a notice issue or
+the marker from its body lets that notice be raised again. Notices are raised
+whenever planning succeeded, even if a later job failed. The n8n 3.x notice will
+use this mechanism.
+
+The workflow creates both labels when it first needs them. They belong to the
+updater and are not triage labels.
