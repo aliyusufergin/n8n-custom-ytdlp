@@ -18,7 +18,8 @@ tested and published.
 Custom images are published on
 [Docker Hub](https://hub.docker.com/r/aliyusufergin/n8n-ytdlp). Publishing runs
 are still started by hand, so floating tags move only when the maintainer starts
-one. Scheduled upstream tracking comes later.
+one. Scheduled upstream tracking comes later; the update frequencies described
+below apply from then on.
 
 ## What the custom image adds
 
@@ -186,7 +187,7 @@ for both linux/amd64 and linux/arm64.
 
 | Tag | Example | Points to |
 | --- | --- | --- |
-| `2` | `2` | The newest custom image of n8n's stable track, while its major version is 2 |
+| `2` | `2` | The newest custom image; its n8n version follows the stable track while that is 2.x |
 | `2.Y` | `2.38` | The newest custom image of that n8n minor |
 | `2.Y.Z` | `2.38.7` | The newest custom image of that n8n version |
 | `2.Y.Z-YYYYMMDD-HHMM` | `2.38.7-20260919-1300` | Exactly one custom image, built at that UTC minute |
@@ -207,16 +208,17 @@ for both linux/amd64 and linux/arm64.
 - **No n8n betas, no 3.x.** No tag contains an n8n beta, and `2` never moves to
   n8n 3.x. When n8n marks a 3.x release as its latest, the custom image keeps
   following patches of its current 2.x minor while n8n publishes them, then stays
-  on the last one.
+  on the last one. Its floating tags still receive new yt-dlp and ffmpeg builds;
+  only the n8n version stops moving.
 
 ### Choosing a tag
 
-| Tag | Receives | Until |
+| Tag | n8n version | New yt-dlp and ffmpeg builds |
 | --- | --- | --- |
-| `2` | Every n8n 2.x stable-track version, yt-dlp nightly and ffmpeg release | n8n stops publishing 2.x patches |
-| `2.Y` | Patches of one n8n minor, plus new yt-dlp and ffmpeg | The stable track moves to the next minor, usually within about a week |
-| `2.Y.Z` | New yt-dlp and ffmpeg for one n8n version | n8n publishes the next stable-track patch, often within days |
-| Build tag | Nothing: one fixed image | — |
+| `2` | Follows the stable track while it is 2.x, then stays on the last 2.x version | Always |
+| `2.Y` | Patches of one minor | Until the custom image moves to the next n8n minor, usually within about a week |
+| `2.Y.Z` | Fixed | Until the custom image moves to the next n8n patch, often within days |
+| Build tag | Fixed | Never |
 
 Old yt-dlp builds stop working on YouTube quickly. A tag that no longer receives
 updates freezes yt-dlp too, so pinning `2.Y`, `2.Y.Z` or a build tag trades
@@ -257,9 +259,12 @@ index digest, so every tag of that image shares it. It is pushed to Docker Hub
 beside the image and also stored by GitHub. The companion runners image is not
 attested.
 
-Verify a published custom image with [GitHub CLI](https://cli.github.com/) 2.68
-or later. `gh` requires a GitHub login (`gh auth login`), even though this
-command reads the attestation from Docker Hub:
+Verify a published custom image with [GitHub CLI](https://cli.github.com/) 2.97
+or later. Versions 2.68 to 2.96 run the command too, but match `--signer-workflow`
+as an unescaped pattern, so a lookalike workflow name could pass
+([GHSA-mm27-mwq9-fr5g](https://github.com/cli/cli/security/advisories/GHSA-mm27-mwq9-fr5g)).
+`gh` requires a GitHub login (`gh auth login`), even though this command reads
+the attestation from Docker Hub:
 
 ```sh
 gh attestation verify oci://docker.io/aliyusufergin/n8n-ytdlp:2 \
@@ -398,8 +403,8 @@ The suite also needs the locked upstream n8n image locally to compare the
 container contract; the build command pulls it, or pull it by its locked digest
 before testing a separately supplied candidate.
 
-To try the [example Compose file](examples/compose.yaml) with a local build before
-publishing it, tag the build under the example's image name:
+To try the [example Compose file](examples/compose.yaml) with a locally built
+custom image, tag it under the example's image name:
 
 ```sh
 docker tag n8n-ytdlp:local aliyusufergin/n8n-ytdlp:2
