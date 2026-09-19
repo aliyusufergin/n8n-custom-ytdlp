@@ -295,7 +295,8 @@ jobs:
           --result "$RUNNER_TEMP/result/published.lock.json"
 
   notify:
-    needs: [plan, build-and-test, publish, verify-published, commit-lock]
+    # The report-only scan stays out: its findings and errors never fail a run.
+    needs: [plan, build-and-test, publish, attest, verify-attestation, verify-published, commit-lock]
     # Every finished run on main reports; a cancelled run and pull requests never touch issues.
     if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04

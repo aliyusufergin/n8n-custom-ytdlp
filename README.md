@@ -340,9 +340,9 @@ severity and a table of every finding, sorted by severity and then Grype's risk
 score.
 
 Findings never fail the run: `fail-build` is off, the scan step and both jobs
-continue on error, and the lock commit does not wait for them. If the scan
-itself fails, the summary says so. The action's warning annotation about the
-severity cutoff is informational.
+continue on error, and neither the lock commit nor the failure issue waits for
+them. If the scan itself fails, the summary says so. The action's warning
+annotation about the severity cutoff is informational.
 
 ## Failure issues and notices
 
