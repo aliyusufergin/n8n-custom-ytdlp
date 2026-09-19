@@ -25,7 +25,7 @@ NOTICE_MARKER = "<!-- updater-notice: {} -->"
 
 def gh(*args: str) -> str:
     # gh reports its own errors on stderr, which stays in the job log.
-    return subprocess.run(["gh", *args], check=True, stdout=subprocess.PIPE, text=True).stdout
+    return subprocess.check_output(["gh", *args], text=True)
 
 
 def labelled_issues(label: str, state: str) -> list[dict]:
@@ -36,7 +36,8 @@ def labelled_issues(label: str, state: str) -> list[dict]:
     return [json.loads(line) for line in output.splitlines()]
 
 
-def open_issue(label: str, title: str, body: str) -> int:
+def create_labelled_issue(label: str, title: str, body: str) -> int:
+    """Create the label if it is missing, then an issue with it."""
     color, description = LABELS[label]
     gh("label", "create", label, "--color", color, "--description", description, "--force")
     issue = json.loads(gh("api", ISSUES, "-f", f"title={title}", "-f", f"body={body}",
@@ -55,19 +56,20 @@ def report_failure(run_url: str, failed_jobs: list[str]) -> None:
         comment(number, f"Publishing run {run_url} failed again (failed jobs: {jobs}).")
         print(f"Commented on failure issue #{number}")
         return
-    number = open_issue(FAILURE_LABEL, "Publishing workflow failed",
-                        f"Publishing run {run_url} failed (failed jobs: {jobs}).\n\n"
-                        "Each later failed run comments here with its run link. "
-                        "The next successful run closes this issue.")
+    number = create_labelled_issue(FAILURE_LABEL, "Publishing workflow failed",
+                                   f"Publishing run {run_url} failed (failed jobs: {jobs}).\n\n"
+                                   "Each later failed run comments here with its run link. "
+                                   "The next successful run closes this issue.")
     print(f"Opened failure issue #{number}")
 
 
 def report_success(run_url: str) -> None:
     for issue in labelled_issues(FAILURE_LABEL, "open"):
-        comment(issue["number"], f"Publishing run {run_url} succeeded, so this failure is resolved.")
-        gh("api", "-X", "PATCH", f'{ISSUES}/{issue["number"]}',
+        number = issue["number"]
+        comment(number, f"Publishing run {run_url} succeeded, so this failure is resolved.")
+        gh("api", "-X", "PATCH", f"{ISSUES}/{number}",
            "-f", "state=closed", "-f", "state_reason=completed", "--silent")
-        print(f'Closed failure issue #{issue["number"]}')
+        print(f"Closed failure issue #{number}")
 
 
 def raise_notices(notices: list[dict], run_url: str) -> None:
@@ -84,7 +86,7 @@ def raise_notices(notices: list[dict], run_url: str) -> None:
             print(f'Notice {notice["key"]} was already raised')
             continue
         body = f'{notice["body"]}\n\nRaised by publishing run {run_url}.\n\n{marker}'
-        number = open_issue(NOTICE_LABEL, notice["title"], body)
+        number = create_labelled_issue(NOTICE_LABEL, notice["title"], body)
         bodies.append(body)
         print(f'Opened notice issue #{number} for {notice["key"]}')
 

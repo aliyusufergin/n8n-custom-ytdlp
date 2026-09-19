@@ -194,6 +194,8 @@ jobs:
           persist-credentials: false
       - name: Download the plan
         if: ${{ needs.plan.result == 'success' }}
+        # A re-run after the plan expired must still report the run, just without notices.
+        continue-on-error: true
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: publish-plan
@@ -204,6 +206,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           NEEDS: ${{ toJSON(needs) }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
         run: |
           args=()
           if [ -f "$RUNNER_TEMP/plan/plan.json" ]; then
