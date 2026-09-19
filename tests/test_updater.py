@@ -48,8 +48,14 @@ class UpdaterTests(unittest.TestCase):
         shutil.rmtree(self.upstream, ignore_errors=True)
         shutil.copytree(RECORDINGS / recording, self.upstream)
 
-    def recorded(self, url: str) -> Path:
-        return self.upstream / quote(url, safe="")
+    def recorded(self, url: str, recording: Path | None = None) -> Path:
+        return (recording or self.upstream) / quote(url, safe="")
+
+    def assert_fails_without_plan(self, result: subprocess.CompletedProcess, message: str) -> None:
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn(message, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def invoke(self, trigger: str, now: str = "2026-09-12T06:17:59Z") -> subprocess.CompletedProcess:
         # A dead proxy makes any accidental live request fail instead of reaching upstream.
@@ -90,8 +96,8 @@ class UpdaterTests(unittest.TestCase):
     def test_bad_checksum_signature_fails_without_a_plan(self) -> None:
         sums = self.recorded(f"{DOWNLOAD}/2026.09.16.232951/SHA2-256SUMS")
         signature = self.recorded(f"{DOWNLOAD}/2026.09.16.232951/SHA2-256SUMS.sig")
-        other_signature = (RECORDINGS / "yt-dlp-nightly-2025.08.30.232839" / quote(
-            f"{DOWNLOAD}/2025.08.30.232839/SHA2-256SUMS.sig", safe="")).read_bytes()
+        other_signature = self.recorded(f"{DOWNLOAD}/2025.08.30.232839/SHA2-256SUMS.sig",
+                                        RECORDINGS / "yt-dlp-nightly-2025.08.30.232839").read_bytes()
         tampered = sums.read_bytes().replace(
             RECORDED_NIGHTLY["sha256"]["yt-dlp_musllinux"].encode(),
             PREVIOUS_NIGHTLY["sha256"]["yt-dlp_musllinux"].encode())
@@ -101,27 +107,18 @@ class UpdaterTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.replay("yt-dlp-nightly-2026.09.16.232951")
                 response.write_bytes(contents)
-                result = self.invoke("manual")
-                self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertEqual(result.stdout, "")
-                self.assertIn("SHA2-256SUMS signature", result.stderr)
+                self.assert_fails_without_plan(self.invoke("manual"), "SHA2-256SUMS signature")
 
     def test_nightly_missing_a_musllinux_asset_fails_without_a_plan(self) -> None:
         # The last nightly before musllinux builds: validly signed, but without either asset.
         self.replay("yt-dlp-nightly-2025.08.30.232839")
-        result = self.invoke("manual")
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("yt-dlp nightly 2025.08.30.232839 has no yt-dlp_musllinux asset", result.stderr)
-        self.assertNotIn("Traceback", result.stderr)
+        self.assert_fails_without_plan(
+            self.invoke("manual"), "yt-dlp nightly 2025.08.30.232839 has no yt-dlp_musllinux asset")
 
     def test_unrecorded_response_fails_instead_of_using_the_network(self) -> None:
         url = f"{DOWNLOAD}/2026.09.16.232951/SHA2-256SUMS.sig"
         self.recorded(url).unlink()
-        result = self.invoke("manual")
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertEqual(result.stdout, "")
-        self.assertIn(f"no recorded response for {url}", result.stderr)
+        self.assert_fails_without_plan(self.invoke("manual"), f"no recorded response for {url}")
 
     def test_manual_and_push_build_with_unchanged_inputs(self) -> None:
         for trigger in ("manual", "push"):

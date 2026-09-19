@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
-YT_DLP_NIGHTLY = "yt-dlp/yt-dlp-nightly-builds"
+YT_DLP_NIGHTLY_REPO = "yt-dlp/yt-dlp-nightly-builds"
 YT_DLP_ASSETS = ("yt-dlp_musllinux", "yt-dlp_musllinux_aarch64")
 # yt-dlp's public.key, committed so that no key is ever fetched at run time.
 YT_DLP_KEY = Path(__file__).with_name("yt-dlp-signing-key.asc")
@@ -93,7 +93,7 @@ def verify_yt_dlp_signature(sums: bytes, signature: bytes) -> None:
 
 def resolve_yt_dlp(upstream: Upstream) -> dict:
     """Return the lock entry for the yt-dlp nightly that releases/latest names."""
-    release = json.loads(upstream.get(f"https://api.github.com/repos/{YT_DLP_NIGHTLY}/releases/latest"))
+    release = json.loads(upstream.get(f"https://api.github.com/repos/{YT_DLP_NIGHTLY_REPO}/releases/latest"))
     tag = release["tag_name"]
     # The tag becomes part of download URLs and image labels.
     if not isinstance(tag, str) or not re.fullmatch(r"[0-9]+(\.[0-9]+)+", tag):
@@ -102,7 +102,7 @@ def resolve_yt_dlp(upstream: Upstream) -> dict:
     for name in ("SHA2-256SUMS", "SHA2-256SUMS.sig", *YT_DLP_ASSETS):
         if name not in assets:
             raise UpstreamError(f"yt-dlp nightly {tag} has no {name} asset")
-    download = f"https://github.com/{YT_DLP_NIGHTLY}/releases/download/{tag}/"
+    download = f"https://github.com/{YT_DLP_NIGHTLY_REPO}/releases/download/{tag}/"
     sums = upstream.get(download + "SHA2-256SUMS")
     verify_yt_dlp_signature(sums, upstream.get(download + "SHA2-256SUMS.sig"))
     checksums = {name: checksum for checksum, name
@@ -121,7 +121,7 @@ def describe_changes(lock: dict, new_lock: dict) -> list[str]:
         if before[field] != after[field]:
             changes.append(f"{name} {before[field]} → {after[field]}")
         elif before != after:
-            changes.append(f"{name} {after[field]} new digest")
+            changes.append(f"{name} {after[field]} republished")
     return changes
 
 
@@ -142,10 +142,10 @@ def main() -> None:
                         choices=("scheduled", "manual", "push", "pull_request"))
     parser.add_argument("--now", type=run_time,
                         help="Run time as ISO 8601 with a timezone (default: current UTC)")
-    upstream = parser.add_mutually_exclusive_group()
-    upstream.add_argument("--replay", type=Path,
+    recording = parser.add_mutually_exclusive_group()
+    recording.add_argument("--replay", type=Path,
                           help="Answer upstream requests only from responses recorded in this directory")
-    upstream.add_argument("--record", type=Path,
+    recording.add_argument("--record", type=Path,
                           help="Also save every live upstream response in this directory for --replay")
     args = parser.parse_args()
     try:
