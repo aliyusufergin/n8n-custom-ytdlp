@@ -116,7 +116,8 @@ linux/arm64.
 
 ## Updater planning
 
-Run the planner locally or in CI with Python 3 and the standard library:
+Run the planner locally or in CI with Python 3, its standard library and `gpgv`
+(GnuPG's signature verifier):
 
 ```sh
 python3 scripts/updater.py --trigger scheduled
@@ -128,29 +129,54 @@ The command prints one JSON object to stdout with these fields:
 | Field | Meaning |
 | --- | --- |
 | `build` | Whether this run should build |
-| `reason` | `build inputs unchanged` or `<trigger> trigger` |
+| `reason` | `build inputs changed`, `<trigger> trigger` or `build inputs unchanged` |
+| `change_summary` | What the build publishes, e.g. `yt-dlp 2026.08.30.232658 → 2026.09.16.232951`, or `n8n X.Y.Z rebuild` when no build input changed; `null` without a build |
 | `new_lock` | Lock contents for the plan |
 | `floating_tags` | Exactly `X`, `X.Y`, `X.Y.Z` from the locked n8n version |
 | `build_tag` | `X.Y.Z-YYYYMMDD-HHMM` from the run's UTC time |
 | `notices` | Notices to raise; currently an empty list |
 
-This first slice takes the lock's build inputs as the current state and makes
-no network requests. `scheduled` therefore skips building; `manual`, `push`
-and `pull_request` request a build even with unchanged inputs. Tags are included
-in either case, and never include `latest`. A `push` means a qualifying push;
-documentation-only filtering belongs to the calling workflow. A plan requests
-only a build: pull-request callers must never publish.
+The updater resolves the yt-dlp nightly from upstream; n8n and ffmpeg are still
+taken from the lock and arrive in later slices. For yt-dlp it:
+
+1. reads `releases/latest` of `yt-dlp/yt-dlp-nightly-builds`;
+2. downloads that release's `SHA2-256SUMS` and `SHA2-256SUMS.sig`;
+3. verifies the signature with `gpgv` against
+   [yt-dlp's signing key](scripts/yt-dlp-signing-key.asc), committed from
+   yt-dlp's `public.key` and pinned to fingerprint
+   `AC0C BBE6 848D 6A87 3464 AF4E 57CF 6593 3B5A 7581`; no key is fetched at run time;
+4. records the nightly tag and the checksums of `yt-dlp_musllinux` and
+   `yt-dlp_musllinux_aarch64` from that verified list.
+
+A bad signature, a missing asset or any failed request exits with status 1 and
+prints no plan, so nothing is built or published. GitHub API requests send the
+`GITHUB_TOKEN` environment variable when it is set, as the publishing workflow
+does, and never forward it to other hosts.
+
+Any build input that differs from the lock requests a build, whatever the
+trigger. Otherwise `scheduled` skips building, while `manual`, `push` and
+`pull_request` still request one. Tags are included in either case, and never
+include `latest`. A `push` means a qualifying push; documentation-only filtering
+belongs to the calling workflow. A plan requests only a build: pull-request
+callers must never publish.
 
 `--now` accepts an ISO 8601 timestamp with `Z` or a UTC offset and normalizes it
 to UTC; omitting it uses the current UTC time. `--lock` defaults to the repository's
 `build-inputs.lock.json`, regardless of the working directory. The command leaves
 the file and its `published` metadata unchanged; only successful publishing can
-record a new published result. Upstream resolution and bootstrapping a missing
-lock arrive in later slices. For now a missing or unreadable lock, a nonnumeric
-n8n version, a version outside major 2, or invalid command arguments fail with a
-nonzero exit code and a diagnostic on stderr.
+record a new published result. Bootstrapping a missing lock arrives in a later
+slice. For now a missing or unreadable lock, a nonnumeric n8n version, a version
+outside major 2, or invalid command arguments exit with status 2 and a
+diagnostic on stderr.
 
-Run the offline command acceptance tests (including controlled-clock cases):
+`--replay DIR` answers every upstream request from responses recorded in `DIR`
+and never uses the network; a request without a recording fails the run.
+`--record DIR` saves every live response there for later replay. See
+[the recordings](tests/fixtures/upstream/README.md) for the file layout.
+
+Run the offline command acceptance tests. They replay real recorded upstream
+responses, control the clock, and cover a new nightly, an unchanged nightly, a
+bad signature and a missing asset:
 
 ```sh
 python3 tests/test_updater.py
@@ -217,7 +243,9 @@ Only the publishing job receives `DOCKERHUB_TOKEN`, using the repository variabl
 `DOCKERHUB_USERNAME=aliyusufergin`. Only the final lock-commit job has
 `contents: write`. It starts from current `main`, verifies that its build inputs
 have not changed since the tested revision, records the verified custom image
-index digest and build tag, and pushes a descriptive commit with `GITHUB_TOKEN`.
+index digest and build tag, and pushes a commit with `GITHUB_TOKEN`. The commit
+message is the plan's change summary plus the build tag, e.g.
+`Publish yt-dlp 2026.08.30.232658 → 2026.09.16.232951 (2.38.7-20260919-1200)`.
 It never force-pushes. A competing push can reject the commit; start a new run
 after resolving the competing change. Workflow-token pushes do not retrigger CI.
 

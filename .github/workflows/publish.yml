@@ -26,6 +26,9 @@ jobs:
       - name: Test the updater and create a manual plan
         id: plan
         shell: bash
+        env:
+          # The updater reads upstream GitHub releases with the read-only workflow token.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           python3 tests/test_updater.py
           mkdir -p "$RUNNER_TEMP/plan"

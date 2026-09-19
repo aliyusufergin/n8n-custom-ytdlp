@@ -28,16 +28,8 @@ def main() -> None:
             raise ValueError("main's build inputs changed during this run; run the workflow again")
         if published[name] != plan["new_lock"][name]:
             raise ValueError("published inputs differ from the plan")
-    changes = []
-    for name, field in (("n8n", "version"), ("yt_dlp", "tag"), ("ffmpeg", "version")):
-        before, after = current[name][field], published[name][field]
-        if before != after:
-            changes.append(f"{name} {before} -> {after}")
-        elif current[name] != published[name]:
-            changes.append(f"{name} build inputs")
-    if not changes:
-        changes.append(f'n8n {published["n8n"]["version"]} rebuild')
-    message = f'Publish {", ".join(changes)} ({plan["build_tag"]})'
+    # The plan's summary compares against the built revision's lock, which main still matches.
+    message = f'Publish {plan["change_summary"]} ({plan["build_tag"]})'
     lock_path.write_text(json.dumps(published, indent=2) + "\n")
     for command in (["git", "add", "--", "build-inputs.lock.json"],
                     ["git", "-c", "user.name=github-actions[bot]", "-c",
