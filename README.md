@@ -16,10 +16,9 @@ tested and published.
 ## Status
 
 Custom images are published on
-[Docker Hub](https://hub.docker.com/r/aliyusufergin/n8n-ytdlp). Publishing runs
-are still started by hand, so floating tags move only when the maintainer starts
-one. Scheduled upstream tracking comes later; the update frequencies described
-below apply from then on.
+[Docker Hub](https://hub.docker.com/r/aliyusufergin/n8n-ytdlp). A scheduled
+workflow checks n8n, yt-dlp and ffmpeg every 6 hours and publishes a new custom
+image when any of them changed, so updates usually arrive within hours.
 
 ## What the custom image adds
 
@@ -195,8 +194,9 @@ for both linux/amd64 and linux/arm64.
 - **Floating tags** (`2`, `2.Y`, `2.Y.Z`) move to each new custom image. A new
   one is published when any build input changes: a new n8n version on the stable
   track, a new yt-dlp nightly, a new ffmpeg release, or an upstream image
-  re-pushed under the same version. Floating tags move only after the new image
-  passed every blocking test on both architectures.
+  re-pushed under the same version. A push to this repository that changes more
+  than documentation publishes one too. Floating tags move only after the new
+  custom image passed every blocking test on both architectures.
 - **Build tags** (`2.Y.Z-YYYYMMDD-HHMM`) never move, and Docker Hub refuses to
   overwrite them. Use one to pin a known-good image or to roll back.
 - **There is no `latest` tag.** An image reference without a tag fails to pull,
@@ -479,8 +479,8 @@ The command prints one JSON object to stdout with these fields:
 | Field | Meaning |
 | --- | --- |
 | `build` | Whether this run should build |
-| `reason` | `build inputs changed`, `<trigger> trigger` or `build inputs unchanged` |
-| `change_summary` | What the build publishes, e.g. `yt-dlp 2026.08.30.232658 → 2026.09.16.232951`, or `n8n X.Y.Z rebuild` when no build input changed; `null` without a build |
+| `reason` | `build inputs changed`, `no lock file`, `<trigger> trigger` or `build inputs unchanged` |
+| `change_summary` | What the build publishes, e.g. `yt-dlp 2026.08.30.232658 → 2026.09.16.232951`, every build input without a lock file, or `n8n X.Y.Z rebuild` when no build input changed; `null` without a build |
 | `new_lock` | Lock contents for the plan |
 | `floating_tags` | Exactly `X`, `X.Y`, `X.Y.Z` from the planned n8n version |
 | `build_tag` | `X.Y.Z-YYYYMMDD-HHMM` from the planned n8n version and the run's UTC time |
@@ -547,17 +547,23 @@ Any build input that differs from the lock requests a build, whatever the
 trigger. Otherwise `scheduled` skips building, while `manual`, `push` and
 `pull_request` still request one. Tags are included in either case, and never
 include `latest`. A `push` means a qualifying push; documentation-only filtering
-belongs to the calling workflow. A plan requests only a build: pull-request
-callers must never publish.
+belongs to the [calling workflow](#publishing). A plan requests only a build:
+pull-request callers must never publish.
 
 `--now` accepts an ISO 8601 timestamp with `Z` or a UTC offset and normalizes it
 to UTC; omitting it uses the current UTC time. `--lock` defaults to the repository's
 `build-inputs.lock.json`, regardless of the working directory. The command leaves
 the file and its `published` metadata unchanged; only successful publishing can
-record a new published result. Bootstrapping a missing lock arrives in a later
-slice. For now a missing or unreadable lock, a nonnumeric n8n version, a version
-outside major 2, or invalid command arguments exit with status 2 and a
-diagnostic on stderr.
+record a new published result.
+
+A missing lock file counts as every build input changed. The plan resolves all
+of them and requests a build for any trigger, with the reason `no lock file` and
+a summary such as `n8n 2.38.7, yt-dlp 2026.09.16.232951, ffmpeg 9.0.1`. Without a
+lock there is no n8n version to keep and no 2.x minor to follow, so a Docker tag
+that is not pushed yet or an n8n 3.x marker fails the run instead.
+
+An unreadable lock, a nonnumeric n8n version, a version outside major 2, or
+invalid command arguments exit with status 2 and a diagnostic on stderr.
 
 `--replay DIR` answers every upstream request from responses recorded in `DIR`
 and never uses the network; a request without a recording fails the run.
@@ -571,7 +577,8 @@ re-pushed digest, ignored prerelease flags, a Docker tag not pushed yet and a
 nightly, an unchanged nightly, a bad signature and a missing asset. For ffmpeg
 they cover a new version, a new major version from its first `X.Y` release,
 ignored non-release tags, a re-pushed digest, an index missing a platform or not
-matching its digest, and a listed tag without an index:
+matching its digest, and a listed tag without an index. Without a lock file they
+cover a full plan, an n8n 3.x marker and a Docker tag not pushed yet:
 
 ```sh
 python3 tests/test_updater.py
@@ -598,23 +605,43 @@ run summary, independently of whether the live YouTube request succeeds.
 
 The [Image workflow](.github/workflows/image.yml) calls the
 [reusable build-and-test workflow](.github/workflows/build-and-test.yml), which
-also supplies candidates to the manual publishing pipeline. Pull-request checks need
+also supplies candidates to the [publishing workflow](#publishing). Pull-request checks need
 no repository secrets, use only `contents: read`, and disable persisted checkout
 credentials. They do not log in to registries, push images, attest, commit, or
 open issues. Buildx's default provenance attestations are disabled for these
 checks. The checkout action is pinned to a full commit SHA.
 
-### Manual publishing
+### Publishing
 
-The [Manual publish workflow](.github/workflows/publish.yml) accepts only
-`workflow_dispatch` on `main`. A maintainer starts it from Actions or with:
+The [Publish workflow](.github/workflows/publish.yml) publishes from `main` only.
+It starts:
+
+- **Every 6 hours at minute 17** UTC. It publishes only when the plan says a
+  build input changed.
+- **On a push to `main`** that changes more than documentation, including the
+  merge of a pull request. It publishes even when no build input changed, so
+  changes to the image recipe, the tests or the pipeline reach the custom image.
+  A push that changes only Markdown files, `docs/` or `examples/` does not start
+  it, so a README fix does not restart auto-updating deployments.
+- **By hand**, from Actions or with the command below. Like a push, it publishes
+  even when no build input changed.
 
 ```sh
 gh workflow run publish.yml --ref main
 ```
 
-It calls the updater with `--trigger manual`, then reuses the native amd64 and
-arm64 build-and-test jobs. Each job exports one OCI archive with BuildKit
+A separate monthly schedule only
+[re-enables the workflow](#re-enable-the-scheduled-workflow).
+
+One run is active at a time. Later runs wait in order and never cancel a running
+one (`cancel-in-progress: false` with `queue: max`). Each run plans against the
+lock file on `main` when it starts, not the lock of the revision it was started
+for. A run that waited behind a publishing run therefore does not publish the
+same build inputs again. When `main` has no lock file, the run resolves every
+build input and publishes; see [updater planning](#updater-planning).
+
+It calls the updater with `--trigger scheduled`, `push` or `manual`, then reuses
+the native amd64 and arm64 build-and-test jobs. Each job exports one OCI archive with BuildKit
 provenance and an SBOM, loads it into Docker's containerd image store, verifies
 that the loaded platform manifest digest matches the archive, and runs the image
 suite with the plan's exact build tag. Only successful jobs upload candidates.
@@ -641,18 +668,17 @@ Only the publishing and attesting jobs receive `DOCKERHUB_TOKEN`, using the
 repository variable `DOCKERHUB_USERNAME=aliyusufergin`. Only the attesting job
 has `id-token: write` and `attestations: write`. Only the final lock-commit job has
 `contents: write`. It starts from current `main`, verifies that its build inputs
-have not changed since the tested revision, records the verified custom image
+have not changed since planning, records the verified custom image
 index digest and build tag, and pushes a commit with `GITHUB_TOKEN`. The commit
 message is the plan's change summary plus the build tag, e.g.
 `Publish yt-dlp 2026.08.30.232658 → 2026.09.16.232951 (2.38.7-20260919-1200)`.
 It never force-pushes. A competing push can reject the commit; start a new run
-after resolving the competing change. Workflow-token pushes do not retrigger CI.
+after resolving the competing change. Pushes made with the workflow token start
+no workflow runs, so a lock commit never starts another publishing run.
 
-Publishing runs are serialized with `cancel-in-progress: false`. A failure stops
-the remaining steps and prevents the lock commit. Registry tag updates across
-two repositories are not atomic: an interrupted publish may move some tags.
-The next successful run republishes all tags to restore pairing. This slice
-does not add schedules or push triggers.
+A failure stops the remaining steps and prevents the lock commit. Registry tag
+updates across two repositories are not atomic: an interrupted publish may move
+some tags. The next successful run republishes all tags to restore pairing.
 
 For a local reproduction of the publishing candidate (Docker 29.8+ with the
 containerd image store and Buildx with OCI export support):
@@ -721,3 +747,24 @@ uses this mechanism.
 
 The workflow creates both labels when it first needs them. They belong to the
 updater and are not triage labels.
+
+### Re-enable the scheduled workflow
+
+GitHub disables scheduled workflows in a public repository after 60 days without
+repository activity. It does not say whether the workflow's own lock commits
+count. On the 1st of every month at 04:43 UTC, the Publish workflow therefore
+runs one job that only marks the workflow enabled through the GitHub API. That
+job has only `actions: write`, and the run builds, publishes and reports nothing.
+
+If GitHub disabled the workflow anyway, the workflow's page in Actions shows a
+banner and no new runs appear. A disabled workflow runs for no trigger, not even
+a push. Re-enable it with **Enable workflow** on that page, or with:
+
+```sh
+gh workflow enable publish.yml
+```
+
+The next scheduled run then publishes whatever changed while the workflow was
+disabled. A manual run publishes at once, but it always builds, even when nothing
+changed. GitHub sends notifications about failed scheduled runs to whoever last
+re-enabled the workflow or changed its schedule.

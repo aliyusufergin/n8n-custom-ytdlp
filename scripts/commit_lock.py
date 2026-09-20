@@ -7,28 +7,33 @@ import re
 import subprocess
 
 
+def read_lock(path: Path) -> dict:
+    """Return a lock file's contents; a missing lock file records no build inputs."""
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", type=Path, required=True)
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--previous-lock", type=Path, required=True,
-                        help="Lock from the source revision that was built")
+                        help="Lock on main that the plan compared against; a missing file means main had none")
     parser.add_argument("--result", type=Path, required=True)
     args = parser.parse_args()
     plan = json.loads(args.plan.read_text())
     published = json.loads(args.result.read_text())
-    previous = json.loads(args.previous_lock.read_text())
+    previous = read_lock(args.previous_lock)
     if (published["published"]["build_tag"] != plan["build_tag"]
             or not re.fullmatch(r"sha256:[0-9a-f]{64}", published["published"]["image_digest"])):
         raise ValueError("missing successful publishing result")
     lock_path = args.repository / "build-inputs.lock.json"
-    current = json.loads(lock_path.read_text())
+    current = read_lock(lock_path)
     for name in ("n8n", "yt_dlp", "ffmpeg"):
-        if current[name] != previous[name]:
+        if current.get(name) != previous.get(name):
             raise ValueError("main's build inputs changed during this run; run the workflow again")
         if published[name] != plan["new_lock"][name]:
             raise ValueError("published inputs differ from the plan")
-    # The plan's summary compares against the built revision's lock, which main still matches.
+    # The plan's summary compares against the previous lock, which main still matches.
     message = f'Publish {plan["change_summary"]} ({plan["build_tag"]})'
     lock_path.write_text(json.dumps(published, indent=2) + "\n")
     for command in (["git", "add", "--", "build-inputs.lock.json"],
