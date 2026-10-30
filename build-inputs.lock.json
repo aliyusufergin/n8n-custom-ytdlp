@@ -1,8 +1,8 @@
 {
   "n8n": {
-    "version": "2.45.6",
-    "image_digest": "sha256:45edf89655fd66dd55ea9336c1791ad14777599fdbf6c5aec6db583ede99a40b",
-    "runners_digest": "sha256:7b11feb37131eebe8e90585ab562f6a90ed2a6acb956e1e6537fe3885d7957e4"
+    "version": "2.45.7",
+    "image_digest": "sha256:9a8d8dcea75667496695d7810d7e1fe018a65efb36cc499d347f3931b3957b5d",
+    "runners_digest": "sha256:2f07088829b6a1df2b6a84746bb8b32c1eaef270315fb5466aa01b1045e9b300"
   },
   "yt_dlp": {
     "tag": "2026.10.29.232701",
@@ -16,7 +16,7 @@
     "image_digest": "sha256:7d9bdaaf887f7e6ce6151f67325c344074b5ff1fb75316011c3376503e449a7b"
   },
   "published": {
-    "build_tag": "2.45.6-20261030-0544",
-    "image_digest": "sha256:914f3b953777e3ebddf5f995e9882598265a8846dbd5e75021466d033265e3d6"
+    "build_tag": "2.45.7-20261030-1251",
+    "image_digest": "sha256:4980c1bd3296082967b5f069a4a1a4f8ad55d8d658a0014c9609491405b4e214"
   }
 }
