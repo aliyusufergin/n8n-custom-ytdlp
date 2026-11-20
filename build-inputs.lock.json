@@ -5,10 +5,10 @@
     "runners_digest": "sha256:4f99e9d82bb26565eae8cb00b687a26e7ce09a8ab476cb39ac9c1ef2d8ecd132"
   },
   "yt_dlp": {
-    "tag": "2026.11.17.232707",
+    "tag": "2026.11.19.232656",
     "sha256": {
-      "yt-dlp_musllinux": "cb56e93504b0b292d034938e6c8d8c5a326a90b34b3016ed09a5b5889b6b89d7",
-      "yt-dlp_musllinux_aarch64": "72b03b3348a08ba02e61e57fc7c6838a1c60160889f6f7b24bb1db1629ad441f"
+      "yt-dlp_musllinux": "774d2b6e265cac5e0349df525e6abafdaface698cd5e4e705268703e6f5c7f73",
+      "yt-dlp_musllinux_aarch64": "c79b63aacb0ba4b673da9b8302f13901e103438559d046a97c80d53e9d8c8353"
     }
   },
   "ffmpeg": {
@@ -16,7 +16,7 @@
     "image_digest": "sha256:7d9bdaaf887f7e6ce6151f67325c344074b5ff1fb75316011c3376503e449a7b"
   },
   "published": {
-    "build_tag": "2.48.6-20261119-2032",
-    "image_digest": "sha256:d2bc2918b489b37142fee470c3a0eeb45856194d539bc927a76ba56df442d579"
+    "build_tag": "2.48.6-20261120-0710",
+    "image_digest": "sha256:72bbaa5d239efe0d022b03e07d44956e34dc616ba62292e4b4b465b84725bd4b"
   }
 }
