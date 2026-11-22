@@ -93,7 +93,7 @@ particular deployment. Background and sources: `survey.md`.
   - codex: `rust-vX.Y.Z` tags, asset `codex-<arch>-unknown-linux-musl.tar.gz`;
   - agy: `google-antigravity/antigravity-cli`, asset `agy_cli_linux_<arch>_musl.tar.gz`.
   - Checksums come from the GitHub API asset `digest`.
-- **Both static binaries run as `node` on the n8n image (Alpine/musl).** Confirmed on amd64
+- **Both static binaries run as `node` on the n8n image (Alpine/musl).** Confirmed
   for codex 0.171.0 and agy 1.5.14 on amd64 and arm64 (CI, PR #30).
   - Nothing beyond what that image ships is needed.
   - codex's standalone binary needs no external `rg`.
