@@ -1,29 +1,19 @@
 ## Facts
 
-- Nothing is built yet. Branch `ai-variant-groundwork` holds `AGENTS.md` (alice-skills
-  flow), `survey.md` and this spec.
-- `survey.md` lists release assets, checksum sources, state folders, sign-in flows, flags
-  and pitfalls for both tools, with sources checked 2026-11-22. Nothing in it was run:
-  the permission classifier blocked running the downloaded binaries in a container during
-  the survey. Running upstream binaries locally will need the user's approval.
-- The n8n image is Alpine (Docker Hardened Images), Node v26, user `node` (uid 1000),
-  HOME=/home/node, no package manager.
-- Today one lock (`build-inputs.lock.json`, with a `published` section) drives one build
-  tag for the custom image and runners image (`scripts/updater.py`, `scripts/publish.py`,
-  `.github/workflows/publish.yml`). The variant must not be coupled to that tag.
-- The binaries are large: codex about 315 MB, agy about 245 MB unpacked, per architecture.
+- The automated smoke test passed on amd64 (see `done.md`). Binaries are unpacked at
+  `/tmp/claude-1000/-home-dev-projects-n8n-custom-ytdlp/25e08389-100b-4175-8639-8eddec5ae21c/scratchpad/smoke/bin`;
+  that folder may be cleared, and re-downloading takes a minute.
+- **Untested:** a completed sign-in, and whether the credentials land inside `~/.codex` and
+  `~/.gemini` and survive a new container. The user was asked to run a manual sign-in test
+  with two test volumes, `aiv-codex` and `aiv-gemini`. After they report back:
+  - list the file *names* in both volumes (never print their contents);
+  - record the result in `done.md` and the spec's assumptions.
+- If credentials land elsewhere, or the keyring is used, stop: the volume layout in the
+  commitments would need the user's approval to change.
+- Nothing in the repository's build or publishing has changed yet.
 
 ## Proposal
 
-Route item 1: the smoke test.
-
-- Inside the pinned n8n image, on amd64 and, through emulation or a runner, on arm64, run:
-  - `codex --version`, `codex exec --help`
-  - `agy --version`, `agy -p --help`
-  - both interactive sign-in flows through `docker exec -it`, up to the point where a URL
-    or code is printed.
-- Also check whether codex needs `rg`, and which
-  folders each tool writes its sign-in state to.
-
-These are the assumptions that would change the design if wrong, so they come before any
-pipeline work.
+Once the sign-in test confirms the folders, do route item 2: lock entries and updater
+detection for codex and agy, plus the variant's own published state and build tag. It is
+the foundation that the build and publishing steps rest on.

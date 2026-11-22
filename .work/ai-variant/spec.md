@@ -93,13 +93,15 @@ particular deployment. Background and sources: `survey.md`.
   - codex: `rust-vX.Y.Z` tags, asset `codex-<arch>-unknown-linux-musl.tar.gz`;
   - agy: `google-antigravity/antigravity-cli`, asset `agy_cli_linux_<arch>_musl.tar.gz`.
   - Checksums come from the GitHub API asset `digest`.
-- **Both static binaries run as `node` on the n8n image (Alpine/musl).**
+- **Both static binaries run as `node` on the n8n image (Alpine/musl).** Confirmed on amd64
+  for codex 0.171.0 and agy 1.5.14; arm64 is still unchecked.
   - Nothing beyond what that image ships is needed.
   - codex's standalone binary needs no external `rg`.
 - **Sign-in flows**
   - `codex login --device-auth` works through `docker exec -it` once device codes are
     enabled in ChatGPT's settings.
-  - agy's paste-the-code flow works without SSH.
+  - agy's paste-the-code flow works without SSH: it printed the URL and paste prompt in a
+    plain `docker run`. A completed sign-in is still untested.
 - **agy's state folder.** agy keeps its sign-in under `~/.gemini` and nothing outside it.
 - **Workflow flags.** In a container, workflows run `codex exec --sandbox
   danger-full-access --skip-git-repo-check` and `agy -p --dangerously-skip-permissions`.
