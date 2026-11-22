@@ -62,7 +62,8 @@ Command node.
 - **No yt-dlp defaults besides the JavaScript runtime.** Formats, output
   templates and every other option stay each workflow's decision.
 - **No other tools.** No `ffplay`, PO token providers, AtomicParsley, aria2c,
-  PhantomJS or rtmpdump. yt-dlp treats all of them as optional.
+  PhantomJS or rtmpdump. yt-dlp treats all of them as optional. AI coding agents
+  are in a separate image, the [AI variant](#ai-variant-codex-and-antigravity).
 - **Only n8n's stable track, major version 2.** No n8n betas or 3.x, no
   rebuilds of older 2.x versions, and no `-pc` variants, which n8n reserves for
   n8n Cloud.
@@ -177,6 +178,133 @@ can use it, so decide who may.
 - [ ] **Updates and rollback:** the floating tag `2` changes almost daily, and
   n8n's database migrations can make a rollback impossible. Back up and
   [choose a tag](#choosing-a-tag) that matches your risk tolerance.
+
+## AI variant: Codex and Antigravity
+
+`aliyusufergin/n8n-ytdlp-ai` is the custom image plus two AI coding agents that
+workflows run from the Execute Command node:
+
+- **[OpenAI Codex CLI](https://github.com/openai/codex)** as `codex`, the static
+  musl build of its latest stable release.
+- **[Google Antigravity CLI](https://github.com/google-antigravity/antigravity-cli)**
+  as `agy`, the static musl build of its latest stable release.
+
+Both are owned by root, run as `node`, and are pinned in the lock file by version
+and the SHA-256 that GitHub lists for each release asset. The image also creates
+`/home/node/.codex` and `/home/node/.gemini`, empty and owned by `node`, where the
+tools keep their sign-in. It sets one variable, `AGY_CLI_DISABLE_AUTO_UPDATE=true`,
+so that agy never tries to replace its pinned binary. Nothing else is configured:
+no credentials, no `config.toml` or `settings.json`.
+
+The AI variant has the same tag shapes as the custom image (`2`, `2.Y`, `2.Y.Z`,
+`2.Y.Z-YYYYMMDD-HHMM`), for linux/amd64 and linux/arm64, with its own build
+tags. It is published when any of its build inputs changes: the custom image's,
+or a new stable codex or agy release. A codex or agy release publishes only the
+AI variant; the custom image and the runners image stay where they are. It is
+about 1 GB larger than the custom image. Use the companion runners image
+`aliyusufergin/n8n-ytdlp-runners` with it, under the same `2.Y.Z` tag, when you
+run external task runners.
+
+> [!CAUTION]
+> These are subscription sign-ins on your own accounts.
+>
+> - **Antigravity:** Google's [FAQ](https://antigravity.google/docs/faq) says
+>   `agy -p` is meant for direct scripting and CI, but that "wrapping `agy` inside
+>   third-party coding agents or applications" is not supported under consumer
+>   plans, and that third-party use of an Antigravity sign-in can get the account
+>   suspended. Running it from n8n may count as such use. Decide whether you
+>   accept that risk for your Google account.
+> - **Google Workspace accounts** have no Antigravity subscription plan and cannot
+>   sign in this way. Use a personal Google account (Free, Google AI Pro or Ultra).
+> - **Codex:** OpenAI recommends API keys for automation and documents ChatGPT
+>   sign-in for trusted environments only. Usage counts against your ChatGPT
+>   plan's limits.
+>
+> The saved sign-ins act like passwords for those accounts. Anyone who can edit
+> workflows can read them through Execute Command.
+
+### Use the AI variant
+
+Replace the image and add a volume for each tool's sign-in folder:
+
+```yaml
+services:
+  n8n:
+    image: aliyusufergin/n8n-ytdlp-ai:2
+    environment:
+      NODES_EXCLUDE: '["n8n-nodes-base.localFileTrigger"]'
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - n8n_files:/home/node/.n8n-files
+      - codex_home:/home/node/.codex
+      - gemini_home:/home/node/.gemini
+
+volumes:
+  n8n_data:
+  n8n_files:
+  codex_home:
+  gemini_home:
+```
+
+- Execute Command must be enabled as in [Enable Execute Command](#enable-execute-command).
+- A fresh named volume starts owned by `node`. A bind mount must be owned by
+  UID 1000, for example `sudo chown -R 1000:1000 ./codex ./gemini`. The tools
+  write refreshed tokens there, so the volumes cannot be read-only.
+- The volumes also hold the tools' logs, session history and caches, and grow
+  with use.
+- In queue mode, workers run the executions, so a worker needs the volumes and
+  its own sign-in. Sharing one sign-in volume between containers that run at the
+  same time is untested.
+
+### Sign in once
+
+Each tool signs in once per volume. A container recreated with the same volumes,
+for example by an image update, stays signed in.
+
+1. **Codex:** in ChatGPT's settings, turn on device code sign-in for Codex
+   (Settings → Security; on a Business or Enterprise workspace, the admin allows
+   it). Then run the command below, open the link it prints on any device, sign in
+   and enter the code:
+
+   ```sh
+   docker compose exec -it n8n codex login --device-auth
+   ```
+
+2. **Antigravity:** run any prompt. agy prints a Google sign-in link. Open it on
+   any device, sign in, and paste the code the page shows back into the terminal:
+
+   ```sh
+   docker compose exec -it n8n agy -p "Say hello"
+   ```
+
+Check with `docker compose exec n8n codex login status`. If a tool later says it
+is not signed in, for example after the account's plan changed, run its sign-in
+again. To sign out, remove the volume and revoke the session in the account's
+security settings.
+
+### Run from a workflow
+
+In an Execute Command node:
+
+```sh
+cd /home/node/.n8n-files && codex exec --sandbox danger-full-access --skip-git-repo-check "Summarize video.info.json in three sentences"
+```
+
+```sh
+cd /home/node/.n8n-files && agy --dangerously-skip-permissions -p "Summarize video.info.json in three sentences"
+```
+
+These flags are an example; the image does not set them. Both tools have their own
+sandboxes, which need Linux user namespaces that Docker blocks in ordinary
+containers. Without these flags codex stays read-only, and agy refuses actions
+that need approval. With them, the agent runs commands and writes files as
+`node` in the container, which is then the only isolation. It can read the
+container's environment variables, such as `N8N_ENCRYPTION_KEY`. Codex outside a
+Git repository needs `--skip-git-repo-check`. For machine-readable output, see
+`codex exec --json` and `agy --output-format json`.
+
+To verify a published AI variant, run the [attestation command](#sigstore-attestation)
+with `oci://docker.io/aliyusufergin/n8n-ytdlp-ai:2`.
 
 ## Tags
 
@@ -376,6 +504,10 @@ From this checkout, run:
 python3 scripts/build_and_test.py
 ```
 
+`python3 scripts/build_and_test.py --variant ai` builds and tests the AI variant as
+`n8n-ytdlp-ai:local` instead; its suite runs every custom-image test plus checks of
+codex, agy, their sign-in folders and their labels.
+
 This builds `n8n-ytdlp:local` for the Docker host's architecture (amd64 or arm64)
 from [build-inputs.lock.json](build-inputs.lock.json), then runs the Python standard
 library image acceptance suite. The build needs network access to Docker Hub and
@@ -442,6 +574,11 @@ ffmpeg's version and multi-architecture digest. Docker selects the image for the
 host architecture; the recipe selects and verifies the corresponding yt-dlp asset.
 Build arguments contain only public metadata.
 
+`codex` and `agy` record each AI tool's version and the SHA-256 of its two musl
+assets. `published_ai_variant` records the AI variant's last successful publish:
+its build tag, index digest and `build_inputs`, the five build inputs it was built
+from.
+
 `published.build_tag` and `published.image_digest` record the last successful
 publish; they were `null` in the seed. Local builds generate a UTC build tag for
 their image labels and leave the committed lock unchanged.
@@ -485,6 +622,16 @@ The command prints one JSON object to stdout with these fields:
 | `floating_tags` | Exactly `X`, `X.Y`, `X.Y.Z` from the planned n8n version |
 | `build_tag` | `X.Y.Z-YYYYMMDD-HHMM` from the planned n8n version and the run's UTC time |
 | `notices` | One-off [notices](#failure-issues-and-notices), each `{"key", "title", "body"}`; currently only the n8n 3.x notice |
+| `ai_variant` | The AI variant's own `build`, `reason`, `change_summary`, `floating_tags`, `build_tag`, `build_inputs`, and `error` when codex or agy could not be resolved |
+
+The AI variant is planned against `published_ai_variant.build_inputs`, not the
+lock's other entries, so it builds when any of its five inputs differs from its
+last publish. A failed AI variant publish is therefore retried by the next run,
+even when the custom image already published the same n8n, yt-dlp and ffmpeg.
+codex and agy come from `releases/latest` of `openai/codex` (tags `rust-vX.Y.Z`)
+and `google-antigravity/antigravity-cli` (tags `X.Y.Z`); a draft, a prerelease or
+any other tag fails only the AI variant's plan, and the custom image's plan goes
+on unchanged.
 
 The updater resolves every build input from upstream: n8n, the yt-dlp nightly
 and ffmpeg.
@@ -632,6 +779,14 @@ gh workflow run publish.yml --ref main
 
 A separate monthly schedule only
 [re-enables the workflow](#re-enable-the-scheduled-workflow).
+
+The AI variant has its own chain of jobs in the same run: build and test,
+publish to `aliyusufergin/n8n-ytdlp-ai`, attest, and verify the attestation and
+every tag on both architectures. Neither chain waits for the other. The lock
+commit records each image's result only after that image's whole chain
+succeeded, so a failure in one leaves the other published, and the failed one is
+retried by the next run. A codex or agy upstream error fails only the
+`ai-upstream` job.
 
 One run is active at a time. Later runs wait in order and never cancel a running
 one (`cancel-in-progress: false` with `queue: max`). Each run plans against the

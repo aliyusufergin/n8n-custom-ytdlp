@@ -30,6 +30,14 @@ _Avoid_: downloads folder, media dir
 An unmodified copy of n8n's `n8nio/runners` image, published as `aliyusufergin/n8n-ytdlp-runners` under the same tags as the custom image so deployments using external task runners keep versions paired.
 _Avoid_: runners fork, custom runners
 
+**AI variant**:
+The image this repository publishes as `aliyusufergin/n8n-ytdlp-ai`: the custom image plus OpenAI's Codex CLI (`codex`) and Google's Antigravity CLI (`agy`), with node-owned sign-in folders that deployments mount as volumes. It has its own build tags and is published without moving the custom image.
+_Avoid_: AI image, codex image, full image
+
+**Sign-in folder**:
+`/home/node/.codex` or `/home/node/.gemini`, where codex or agy keeps a subscription sign-in; each is a deployment's volume so the sign-in survives image updates.
+_Avoid_: config dir, auth volume
+
 ### Publishing
 
 **Build inputs**:
