@@ -11,7 +11,6 @@
   - 6: a scheduled run with no upstream change publishes nothing. Check the next quiet
     scheduled run.
 - **Pending user actions:**
-  - the Docker Hub immutability rule on `n8n-ytdlp-ai` (UI only);
   - deleting the local test volumes `aiv-codex` and `aiv-gemini`, which hold real tokens.
 - This record lives on branch `ai-variant-record`, not on `main`. Pushing `.work/` to
   `main` would republish both images (journal).
