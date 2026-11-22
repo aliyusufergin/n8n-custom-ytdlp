@@ -10,6 +10,7 @@ import tarfile
 
 CUSTOM = "docker.io/aliyusufergin/n8n-ytdlp"
 RUNNERS = "docker.io/aliyusufergin/n8n-ytdlp-runners"
+AI_VARIANT = "docker.io/aliyusufergin/n8n-ytdlp-ai"
 OCI_INDEX = "application/vnd.oci.image.index.v1+json"
 
 
@@ -93,16 +94,21 @@ def main() -> None:
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--result", type=Path, required=True)
+    parser.add_argument("--variant", choices=("custom", "ai"), default="custom",
+                        help="Publish the custom and runners images, or the AI variant alone")
     args = parser.parse_args()
     plan = json.loads(args.plan.read_text())
-    if plan["build"] is not True:
-        parser.error("plan does not request a build")
+    ai = args.variant == "ai"
+    image_plan = plan["ai_variant"] if ai else plan
+    if image_plan["build"] is not True:
+        parser.error(f"plan does not request a {args.variant} build")
+    repository = AI_VARIANT if ai else CUSTOM
     # Validate both artifacts and successful-test receipts before any registry write.
     manifests = []
     archives = []
     for arch in ("amd64", "arm64"):
-        path = args.artifacts / f"candidate-{arch}" / "image.tar"
-        evidence = inspect_archive(path, arch, plan["build_tag"])
+        path = args.artifacts / f"{'ai-candidate' if ai else 'candidate'}-{arch}" / "image.tar"
+        evidence = inspect_archive(path, arch, image_plan["build_tag"])
         if evidence != json.loads(path.with_suffix(".json").read_text()):
             raise ValueError(f"{arch} archive differs from the successful test receipt")
         manifests.extend(evidence["manifests"])
@@ -111,14 +117,25 @@ def main() -> None:
                         "manifests": manifests}, separators=(",", ":")).encode()
     index_digest = digest(index)
     for path, evidence in archives:
-        target = f'{CUSTOM}@{evidence["index_digest"]}'
+        target = f'{repository}@{evidence["index_digest"]}'
         regctl("image", "import", target, str(path))
         verify_remote(target, evidence["index_digest"])
         for manifest in evidence["manifests"]:
-            verify_remote(f'{CUSTOM}@{manifest["digest"]}', manifest["digest"])
+            verify_remote(f'{repository}@{manifest["digest"]}', manifest["digest"])
     # Upload by digest first. Floating tags move only after both payloads exist.
-    regctl("manifest", "put", f"{CUSTOM}@{index_digest}", "--content-type", OCI_INDEX, data=index)
-    verify_remote(f"{CUSTOM}@{index_digest}", index_digest)
+    regctl("manifest", "put", f"{repository}@{index_digest}", "--content-type", OCI_INDEX, data=index)
+    verify_remote(f"{repository}@{index_digest}", index_digest)
+    if ai:
+        for tag in [image_plan["build_tag"], *image_plan["floating_tags"]]:
+            regctl("image", "copy", f"{repository}@{index_digest}", f"{repository}:{tag}")
+            verify_remote(f"{repository}:{tag}", index_digest)
+        # The variant's build inputs, readable by the image suite, and its published state.
+        result = {**image_plan["build_inputs"], "published_ai_variant": {
+            "build_tag": image_plan["build_tag"], "image_digest": index_digest,
+            "build_inputs": image_plan["build_inputs"]}}
+        args.result.write_text(json.dumps(result, indent=2) + "\n")
+        print(f'Published AI variant {image_plan["build_tag"]}: {index_digest}')
+        return
     runners_digest = plan["new_lock"]["n8n"]["runners_digest"]
     regctl("image", "copy", f"docker.io/n8nio/runners@{runners_digest}",
            f"{RUNNERS}@{runners_digest}")

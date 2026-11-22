@@ -37,6 +37,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       build: ${{ steps.plan.outputs.build }}
+      build-ai: ${{ steps.plan.outputs.build-ai }}
+      ai-error: ${{ steps.plan.outputs.ai-error }}
     steps:
       - name: Check out the source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,6 +74,8 @@ jobs:
           import json, sys
           plan = json.load(open(sys.argv[1]))
           print(f'build={str(plan["build"]).lower()}')
+          print(f'build-ai={str(plan["ai_variant"]["build"]).lower()}')
+          print('ai-error=' + (plan["ai_variant"]["error"] or "").replace("\n", " "))
           PY
       - name: Save the plan and the previous lock for this run
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -87,6 +91,168 @@ jobs:
     uses: ./.github/workflows/build-and-test.yml
     with:
       publish-candidate: true
+
+  # An AI tool's upstream error fails only this job, so the failure issue opens while the
+  # custom image publishes as usual.
+  ai-upstream:
+    needs: plan
+    if: ${{ needs.plan.outputs.ai-error != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fail with the AI tool's upstream error
+        env:
+          AI_ERROR: ${{ needs.plan.outputs.ai-error }}
+        run: |
+          echo "::error::The AI variant cannot be planned: $AI_ERROR"
+          exit 1
+
+  # The AI variant's chain mirrors the custom image's and never blocks it.
+  build-and-test-ai:
+    needs: plan
+    if: ${{ needs.plan.outputs.build-ai == 'true' }}
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      publish-candidate: true
+      variant: ai
+
+  publish-ai:
+    needs: [plan, build-and-test-ai]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      image-digest: ${{ steps.published.outputs.image-digest }}
+      build-tag: ${{ steps.published.outputs.build-tag }}
+    steps:
+      - name: Check out the source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download this run's plan and tested archives
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          path: ${{ runner.temp }}/publish
+      - name: Install the registry client
+        uses: regclient/actions/regctl-installer@1b705e32d40851370799ea5814e83d0a5f6a70dc # v0.1.0
+        with:
+          release: v0.11.6
+      - name: Log in to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish and verify the AI variant and every tag
+        run: >-
+          python3 scripts/publish.py --variant ai
+          --plan "$RUNNER_TEMP/publish/publish-plan/plan.json"
+          --artifacts "$RUNNER_TEMP/publish"
+          --result "$RUNNER_TEMP/ai-published.json"
+      - name: Save the verified AI variant result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ai-published
+          path: ${{ runner.temp }}/ai-published.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Expose the verified AI variant index digest and build tag
+        id: published
+        run: >-
+          python3 -c 'import json, sys; state = json.load(open(sys.argv[1]))["published_ai_variant"];
+          print("image-digest=" + state["image_digest"]); print("build-tag=" + state["build_tag"])'
+          "$RUNNER_TEMP/ai-published.json" >> "$GITHUB_OUTPUT"
+
+  attest-ai:
+    needs: publish-ai
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Attest the AI variant index and push the attestation to Docker Hub
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: docker.io/aliyusufergin/n8n-ytdlp-ai
+          subject-digest: ${{ needs.publish-ai.outputs.image-digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+  verify-attestation-ai:
+    needs: [publish-ai, attest-ai]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Run the README verification command on the AI variant
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_TAG: ${{ needs.publish-ai.outputs.build-tag }}
+        run: |
+          gh attestation verify "oci://docker.io/aliyusufergin/n8n-ytdlp-ai:$BUILD_TAG" \
+            --repo aliyusufergin/n8n-custom-ytdlp \
+            --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
+            --source-ref refs/heads/main \
+            --bundle-from-oci
+          printf 'The attestation of aliyusufergin/n8n-ytdlp-ai:%s verified from Docker Hub.\n' "$BUILD_TAG" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  verify-published-ai:
+    needs: publish-ai
+    name: Verify published AI variant (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out the image acceptance suite
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the verified AI variant result
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: ai-published
+          path: ${{ runner.temp }}/result
+      - name: Install the registry client
+        uses: regclient/actions/regctl-installer@1b705e32d40851370799ea5814e83d0a5f6a70dc # v0.1.0
+        with:
+          release: v0.11.6
+      - name: Anonymously pull, verify tags, and run the AI variant suite
+        env:
+          ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from publish import AI_VARIANT, verify_remote
+          result_path = Path(os.environ['RUNNER_TEMP']) / 'result/ai-published.json'
+          state = json.loads(result_path.read_text())['published_ai_variant']
+          major, minor, patch = state['build_inputs']['n8n']['version'].split('.')
+          tags = [major, f'{major}.{minor}', f'{major}.{minor}.{patch}', state['build_tag']]
+          for tag in tags:
+              verify_remote(f'{AI_VARIANT}:{tag}', state['image_digest'])
+          image = f'{AI_VARIANT}:{major}'
+          for reference in (image, f'n8nio/n8n@{state["build_inputs"]["n8n"]["image_digest"]}'):
+              subprocess.run(['docker', 'pull', '--platform', f'linux/{os.environ["ARCH"]}', reference], check=True)
+          subprocess.run([sys.executable, 'tests/test_image.py', image, str(result_path),
+                          '--variant', 'ai', '--build-tag', state['build_tag']], check=True)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'Published {image} passed all AI variant tests on {os.environ["ARCH"]}.\n\n')
+              summary.write(f'All AI variant tags match the published result: {tags}\n')
+          PY
 
   publish:
     needs: [plan, build-and-test]
@@ -292,11 +458,26 @@ jobs:
           >> "$GITHUB_STEP_SUMMARY"
 
   commit-lock:
-    needs: [publish, attest, verify-attestation, verify-published]
+    needs: [publish, attest, verify-attestation, verify-published,
+            publish-ai, attest-ai, verify-attestation-ai, verify-published-ai]
+    # Each image's lock keys move only after that image's whole chain succeeded.
+    if: >-
+      ${{ !cancelled() && (
+      (needs.publish.result == 'success' && needs.attest.result == 'success'
+      && needs.verify-attestation.result == 'success' && needs.verify-published.result == 'success')
+      || (needs.publish-ai.result == 'success' && needs.attest-ai.result == 'success'
+      && needs.verify-attestation-ai.result == 'success' && needs.verify-published-ai.result == 'success')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
+    env:
+      CUSTOM_OK: >-
+        ${{ needs.publish.result == 'success' && needs.attest.result == 'success'
+        && needs.verify-attestation.result == 'success' && needs.verify-published.result == 'success' }}
+      AI_OK: >-
+        ${{ needs.publish-ai.result == 'success' && needs.attest-ai.result == 'success'
+        && needs.verify-attestation-ai.result == 'success' && needs.verify-published-ai.result == 'success' }}
     steps:
       - name: Check out the verified automation revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -314,21 +495,38 @@ jobs:
           name: publish-plan
           path: ${{ runner.temp }}/plan
       - name: Download the verified published lock
+        if: ${{ env.CUSTOM_OK == 'true' }}
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: published-lock
           path: ${{ runner.temp }}/result
+      - name: Download the verified AI variant result
+        if: ${{ env.AI_OK == 'true' }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: ai-published
+          path: ${{ runner.temp }}/result
       - name: Commit on current main and push without force
-        run: >-
-          python3 automation/scripts/commit_lock.py
-          --repository current
-          --plan "$RUNNER_TEMP/plan/plan.json"
-          --previous-lock "$RUNNER_TEMP/plan/previous.lock.json"
-          --result "$RUNNER_TEMP/result/published.lock.json"
+        shell: bash
+        run: |
+          args=()
+          if [ "$CUSTOM_OK" = true ]; then
+            args+=(--result "$RUNNER_TEMP/result/published.lock.json")
+          fi
+          if [ "$AI_OK" = true ]; then
+            args+=(--ai-result "$RUNNER_TEMP/result/ai-published.json")
+          fi
+          python3 automation/scripts/commit_lock.py \
+            --repository current \
+            --plan "$RUNNER_TEMP/plan/plan.json" \
+            --previous-lock "$RUNNER_TEMP/plan/previous.lock.json" \
+            "${args[@]}"
 
   notify:
     # The report-only scan stays out: its findings and errors never fail a run.
-    needs: [plan, build-and-test, publish, attest, verify-attestation, verify-published, commit-lock]
+    needs: [plan, build-and-test, publish, attest, verify-attestation, verify-published,
+            ai-upstream, build-and-test-ai, publish-ai, attest-ai, verify-attestation-ai,
+            verify-published-ai, commit-lock]
     # Every finished publishing run on main reports; a cancelled run, pull requests and the
     # monthly re-enable never touch issues.
     if: >-

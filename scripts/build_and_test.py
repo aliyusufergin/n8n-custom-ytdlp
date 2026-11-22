@@ -42,7 +42,7 @@ def main() -> None:
     if host not in ("linux/amd64", "linux/arm64"):
         parser.error(f"Unsupported Docker host platform: {host}")
     now = datetime.now(timezone.utc)
-    build_tag = plan["build_tag"] if plan else f'{lock["n8n"]["version"]}-{now:%Y%m%d-%H%M}'
+    build_tag = (plan["ai_variant"] if args.variant == "ai" else plan)["build_tag"] if plan else f'{lock["n8n"]["version"]}-{now:%Y%m%d-%H%M}'
     revision = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
     ).strip()

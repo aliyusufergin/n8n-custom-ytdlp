@@ -10,3 +10,5 @@
 - 2026-11-22: The committed lock now carries `codex` and `agy` entries (codex 0.171.0, agy 1.5.14) so local and PR builds of the variant work without a plan. There is no `published_ai_variant` yet, so the first publish run plans the variant's first build.
 - 2026-11-22: Local AI variant image is 3.46 GB against 2.47 GB for the custom image.
 - 2026-11-22: In publish runs, `build-and-test.yml` skips the AI variant ("not wired yet") and uploads only custom candidates. Route 4 replaces this skip with real variant publishing.
+- 2026-11-22: `build-and-test.yml` takes a `variant` input and is called once per image (`image.yml` and `publish.yml`), so an AI variant failure never fails the custom image's build job. The temporary matrix skip from route 3 is gone.
+- 2026-11-22: The AI variant has no vulnerability scan job. The custom image's report-only scan is unchanged; adding one for the variant is optional.
