@@ -94,7 +94,7 @@ particular deployment. Background and sources: `survey.md`.
   - agy: `google-antigravity/antigravity-cli`, asset `agy_cli_linux_<arch>_musl.tar.gz`.
   - Checksums come from the GitHub API asset `digest`.
 - **Both static binaries run as `node` on the n8n image (Alpine/musl).** Confirmed on amd64
-  for codex 0.171.0 and agy 1.5.14; arm64 is still unchecked.
+  for codex 0.171.0 and agy 1.5.14 on amd64 and arm64 (CI, PR #30).
   - Nothing beyond what that image ships is needed.
   - codex's standalone binary needs no external `rg`.
 - **Sign-in flows.** Confirmed on amd64 on 2026-11-22 through `docker run -it`:
