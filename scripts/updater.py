@@ -391,8 +391,8 @@ def main() -> None:
     try:
         for key, repository, pattern, assets in AI_TOOL_RELEASES:
             new_lock[key] = resolve_ai_tool(upstream, key, repository, pattern, assets)
-    except (UpstreamError, ValueError) as error:
-        ai_error = str(error)
+    except Exception as error:  # Any malformed AI tool response stops only the AI variant.
+        ai_error = str(error) if isinstance(error, UpstreamError) else f"{type(error).__name__}: {error}"
         for key, _, _, _ in AI_TOOL_RELEASES:
             if lock is not None and key in lock:
                 new_lock[key] = lock[key]

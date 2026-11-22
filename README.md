@@ -201,9 +201,13 @@ The AI variant has the same tag shapes as the custom image (`2`, `2.Y`, `2.Y.Z`,
 tags. It is published when any of its build inputs changes: the custom image's,
 or a new stable codex or agy release. A codex or agy release publishes only the
 AI variant; the custom image and the runners image stay where they are. It is
-about 1 GB larger than the custom image. Use the companion runners image
-`aliyusufergin/n8n-ytdlp-runners` with it, under the same `2.Y.Z` tag, when you
-run external task runners.
+about 1 GB larger than the custom image.
+
+With external task runners, pair it with the companion runners image
+`aliyusufergin/n8n-ytdlp-runners` of the same n8n version. The two images are
+published independently, so for a short while after a new n8n version one may
+carry its tag before the other does. Pin the same exact `2.Y.Z` on both and move
+it once both tags exist, rather than following `2` with external runners.
 
 > [!CAUTION]
 > These are subscription sign-ins on your own accounts.
@@ -303,8 +307,16 @@ container's environment variables, such as `N8N_ENCRYPTION_KEY`. Codex outside a
 Git repository needs `--skip-git-repo-check`. For machine-readable output, see
 `codex exec --json` and `agy --output-format json`.
 
-To verify a published AI variant, run the [attestation command](#sigstore-attestation)
-with `oci://docker.io/aliyusufergin/n8n-ytdlp-ai:2`.
+To verify a published AI variant, see [Sigstore attestation](#sigstore-attestation)
+for the `gh` requirements, then run:
+
+```sh
+gh attestation verify oci://docker.io/aliyusufergin/n8n-ytdlp-ai:2 \
+  --repo aliyusufergin/n8n-custom-ytdlp \
+  --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
+  --source-ref refs/heads/main \
+  --bundle-from-oci
+```
 
 ## Tags
 
@@ -816,7 +828,9 @@ plan's `X`, `X.Y`, `X.Y.Z` floating tags and `X.Y.Z-YYYYMMDD-HHMM` build tag.
 There is no `latest` tag. The companion runners image is copied recursively from
 the locked upstream digest, with no modifications or additional attestations;
 every runners tag is checked against that digest. Docker Hub's configured
-immutability rule protects build tags. Use a new run with a new UTC-minute build
+immutability rule protects build tags; `aliyusufergin/n8n-ytdlp-ai` needs the same
+rule for its `2.*-*` build tags, set up in Docker Hub when the repository is first
+created. Use a new run with a new UTC-minute build
 tag after a partial publish instead of rerunning the same plan.
 
 Only the publishing and attesting jobs receive `DOCKERHUB_TOKEN`, using the

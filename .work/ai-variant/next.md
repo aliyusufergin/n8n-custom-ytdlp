@@ -1,25 +1,20 @@
 ## Facts
 
-- Route items 1–4 are implemented. Publishing (item 4) has only been checked locally:
-  - actionlint is clean apart from the existing `queue: max`, which actionlint 1.7.7
-    doesn't know;
-  - `commit_lock.py` passed the custom-only, AI-only and both scenarios in a throwaway git
-    repo.
-- The variant's real publish path (Docker Hub push to `aliyusufergin/n8n-ytdlp-ai`,
-  attestation, verification) first runs after the merge to main. That push also republishes
-  the custom image once, which the user accepted (journal).
-- The Docker Hub repository `aliyusufergin/n8n-ytdlp-ai` doesn't exist yet. A personal
-  account's push normally creates it, but the `DOCKERHUB_TOKEN` scope is unknown. If the
-  first push is refused, the user creates the repository or widens the token.
-- PR #30 is a draft. CI on it checks the build-and-test split, not publishing.
+- Route items 1–5 are done and pushed to draft PR #30. CI passes on both images and both
+  architectures; publishing itself can only run from `main`.
+- The independent check's six findings are fixed (see `done.md`). The commit-lock
+  scenarios were checked locally; the publish chain has never run on GitHub.
+- **Before or right after the merge, the user needs to:**
+  - make sure `DOCKERHUB_TOKEN` can push to a new repository `aliyusufergin/n8n-ytdlp-ai`,
+    or create that repository first;
+  - add a Docker Hub immutability rule for its build tags, as on the custom image's
+    repository.
+- The merge publishes the custom image once more (accepted, journal) and the variant for
+  the first time.
 
 ## Proposal
 
-Route item 5: documentation.
-
-- README sections for the variant: what it adds; Compose volumes, including `chown` for
-  bind mounts; one-time sign-in and its prerequisites; non-interactive flags as an example;
-  a pointer to enabling Execute Command; the Antigravity terms risk; the verification
-  command for `n8n-ytdlp-ai`; the "no other tools" text adjusted.
-- A `CONTEXT.md` glossary entry for the AI variant.
-- Then the independent check, and the merge decision with the user before the milestone.
+Milestone: ask the user to merge PR #30 (or approve that I mark it ready and merge). Then
+watch the first publish run, and fix anything in the AI chain. Finally, the user checks
+"Done means" 2 on their deployment: sign in, recreate the container on a newer tag, and run
+both tools from an Execute Command node.

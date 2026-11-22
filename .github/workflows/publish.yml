@@ -128,9 +128,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Download this run's plan and tested archives
+      - name: Download this run's plan
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
+          name: publish-plan
+          path: ${{ runner.temp }}/publish/publish-plan
+      - name: Download the AI variant's tested archives only
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: ai-candidate-*
           path: ${{ runner.temp }}/publish
       - name: Install the registry client
         uses: regclient/actions/regctl-installer@1b705e32d40851370799ea5814e83d0a5f6a70dc # v0.1.0
@@ -193,11 +199,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BUILD_TAG: ${{ needs.publish-ai.outputs.build-tag }}
         run: |
-          gh attestation verify "oci://docker.io/aliyusufergin/n8n-ytdlp-ai:$BUILD_TAG" \
-            --repo aliyusufergin/n8n-custom-ytdlp \
-            --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
-            --source-ref refs/heads/main \
-            --bundle-from-oci
+          # The build tag, and the README's own reference, which now points to the same index.
+          for reference in "aliyusufergin/n8n-ytdlp-ai:$BUILD_TAG" "aliyusufergin/n8n-ytdlp-ai:2"; do
+            gh attestation verify "oci://docker.io/$reference" \
+              --repo aliyusufergin/n8n-custom-ytdlp \
+              --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
+              --source-ref refs/heads/main \
+              --bundle-from-oci
+          done
           printf 'The attestation of aliyusufergin/n8n-ytdlp-ai:%s verified from Docker Hub.\n' "$BUILD_TAG" \
             >> "$GITHUB_STEP_SUMMARY"
 
@@ -265,9 +274,16 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Download this run's plan and tested archives
+      - name: Download this run's plan
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
+          name: publish-plan
+          path: ${{ runner.temp }}/publish/publish-plan
+      - name: Download the custom image's tested archives only
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          # candidate-* does not match the AI variant's ai-candidate-* archives.
+          pattern: candidate-*
           path: ${{ runner.temp }}/publish
       - name: Install the registry client
         uses: regclient/actions/regctl-installer@1b705e32d40851370799ea5814e83d0a5f6a70dc # v0.1.0
