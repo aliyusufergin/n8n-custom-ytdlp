@@ -56,6 +56,28 @@ FFMPEG_8_1_2: dict = {
     "image_digest": "sha256:33f770f812cbfc3de96c547157fc9faf8bd95a36481753439ffa761045167585",
 }
 FFMPEG_9_0_1_INDEX = f"{FFMPEG_REPOSITORY}/manifests/{FFMPEG_9_0_1['image_digest']}"
+CODEX_LATEST = "https://api.github.com/repos/openai/codex/releases/latest"
+AGY_LATEST = "https://api.github.com/repos/google-antigravity/antigravity-cli/releases/latest"
+# The stable releases that releases/latest named when the recordings were made.
+CODEX_0_171_0: dict = {
+    "version": "0.171.0",
+    "sha256": {
+        "codex-x86_64-unknown-linux-musl.tar.gz": "01baa2e47809f8597be5b2f8abd4e4dfe3fb5bcb6e504c2fbaaad97056c15e8d",
+        "codex-aarch64-unknown-linux-musl.tar.gz": "bcf50b836385e51bd2976ab2bbe92b1b08a1cbe37712eb8dbe378aa78d24871c",
+    },
+}
+AGY_1_5_14: dict = {
+    "version": "1.5.14",
+    "sha256": {
+        "agy_cli_linux_x64_musl.tar.gz": "3e499f1b33cf28437d0ff90f178628dc6958e5a94c284585d13fd9b446b639f4",
+        "agy_cli_linux_arm64_musl.tar.gz": "d5c664f860e5eedc3486f575d51ecd3a4afaec3e7657b83650108aeb9b692f21",
+    },
+}
+# An older codex release, as a lock would name it before codex 0.171.0.
+CODEX_0_170_0: dict = {
+    "version": "0.170.0",
+    "sha256": {name: "0" * 64 for name in CODEX_0_171_0["sha256"]},
+}
 
 
 class UpdaterTests(unittest.TestCase):
@@ -67,15 +89,22 @@ class UpdaterTests(unittest.TestCase):
         self.lock["n8n"] = dict(N8N_2_38_7)
         self.lock["yt_dlp"] = RECORDED_NIGHTLY
         self.lock["ffmpeg"] = FFMPEG_9_0_1
+        self.lock["codex"] = CODEX_0_171_0
+        self.lock["agy"] = AGY_1_5_14
+        self.lock["published_ai_variant"] = {
+            "build_tag": "2.38.7-20260912-0017",
+            "image_digest": "sha256:" + "a" * 64,
+            "build_inputs": {key: self.lock[key] for key in ("n8n", "yt_dlp", "ffmpeg", "codex", "agy")},
+        }
         self.lock_path.write_text(json.dumps(self.lock))
         self.upstream = Path(temporary.name) / "upstream"
         self.replay()
 
     def replay(self, n8n: str = "n8n-2.38.7", yt_dlp: str = "yt-dlp-nightly-2026.09.16.232951",
                ffmpeg: str = "ffmpeg-9.0.1") -> None:
-        """Answer upstream requests from exactly one n8n, one yt-dlp and one ffmpeg recording."""
+        """Answer upstream requests from exactly one recording of each upstream."""
         shutil.rmtree(self.upstream, ignore_errors=True)
-        for recording in (n8n, yt_dlp, ffmpeg):
+        for recording in (n8n, yt_dlp, ffmpeg, "codex-0.171.0", "agy-1.5.14"):
             shutil.copytree(RECORDINGS / recording, self.upstream, dirs_exist_ok=True)
 
     def recorded(self, url: str, recording: Path | None = None) -> Path:
@@ -129,6 +158,14 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         return json.loads(result.stdout)
 
+    def write_lock(self) -> None:
+        self.lock_path.write_text(json.dumps(self.lock))
+
+    def edit_release(self, url: str, **changes) -> None:
+        """Let a recorded GitHub latest release carry other fields."""
+        response = self.recorded(url)
+        response.write_text(json.dumps({**json.loads(response.read_bytes()), **changes}))
+
     def test_scheduled_unchanged_inputs_skip_build(self) -> None:
         plan = self.command("scheduled")
         self.assertIs(plan["build"], False)
@@ -136,6 +173,87 @@ class UpdaterTests(unittest.TestCase):
         self.assertIsNone(plan["change_summary"])
         self.assertEqual(plan["new_lock"], self.lock)
         self.assertEqual(plan["notices"], [])
+        self.assertIs(plan["ai_variant"]["build"], False)
+        self.assertEqual(plan["ai_variant"]["reason"], "build inputs unchanged")
+
+    def test_new_ai_tool_release_plans_only_the_ai_variant(self) -> None:
+        self.lock["codex"] = CODEX_0_170_0
+        self.lock["published_ai_variant"]["build_inputs"]["codex"] = CODEX_0_170_0
+        self.write_lock()
+        plan = self.command("scheduled")
+        self.assertIs(plan["build"], False)
+        self.assertIs(plan["ai_variant"]["build"], True)
+        self.assertEqual(plan["ai_variant"]["reason"], "build inputs changed")
+        self.assertEqual(plan["ai_variant"]["change_summary"], "codex 0.170.0 → 0.171.0")
+        self.assertEqual(plan["new_lock"]["codex"], CODEX_0_171_0)
+        self.assertEqual(plan["ai_variant"]["build_inputs"]["codex"], CODEX_0_171_0)
+        self.assertEqual(plan["ai_variant"]["build_tag"], "2.38.7-20260912-0617")
+        self.assertEqual(plan["ai_variant"]["floating_tags"], ["2", "2.38", "2.38.7"])
+
+    def test_custom_image_input_change_plans_both_images(self) -> None:
+        self.lock["yt_dlp"] = PREVIOUS_NIGHTLY
+        self.lock["published_ai_variant"]["build_inputs"]["yt_dlp"] = PREVIOUS_NIGHTLY
+        self.write_lock()
+        plan = self.command("scheduled")
+        self.assertIs(plan["build"], True)
+        self.assertIs(plan["ai_variant"]["build"], True)
+        self.assertEqual(plan["ai_variant"]["change_summary"],
+                         "yt-dlp 2026.08.30.232658 → 2026.09.16.232951")
+
+    def test_ai_variant_retries_inputs_the_custom_image_already_published(self) -> None:
+        # The custom image published n8n 2.38.7, but the variant's last publish was on 2.37.11.
+        self.lock["published_ai_variant"]["build_inputs"]["n8n"] = {**N8N_2_38_7, "version": "2.37.11"}
+        self.write_lock()
+        plan = self.command("scheduled")
+        self.assertIs(plan["build"], False)
+        self.assertIs(plan["ai_variant"]["build"], True)
+        self.assertEqual(plan["ai_variant"]["change_summary"], "n8n 2.37.11 → 2.38.7")
+
+    def test_unpublished_ai_variant_plans_its_first_build(self) -> None:
+        del self.lock["published_ai_variant"], self.lock["codex"], self.lock["agy"]
+        self.write_lock()
+        plan = self.command("scheduled")
+        self.assertIs(plan["build"], False)
+        self.assertIs(plan["ai_variant"]["build"], True)
+        self.assertEqual(plan["ai_variant"]["reason"], "AI variant not published yet")
+        self.assertEqual(plan["new_lock"]["codex"], CODEX_0_171_0)
+        self.assertEqual(plan["new_lock"]["agy"], AGY_1_5_14)
+
+    def test_push_trigger_rebuilds_both_images(self) -> None:
+        plan = self.command("push")
+        self.assertIs(plan["build"], True)
+        self.assertIs(plan["ai_variant"]["build"], True)
+        self.assertEqual(plan["ai_variant"]["reason"], "push trigger")
+
+    def assert_only_the_ai_variant_fails(self, message: str) -> None:
+        """The custom image plans as if nothing happened; the variant carries the error."""
+        self.lock["yt_dlp"] = PREVIOUS_NIGHTLY
+        self.write_lock()
+        plan = self.command("scheduled")
+        self.assertIs(plan["build"], True)
+        self.assertEqual(plan["new_lock"], {**self.lock, "yt_dlp": RECORDED_NIGHTLY})
+        self.assertIs(plan["ai_variant"]["build"], False)
+        self.assertEqual(plan["ai_variant"]["reason"], "upstream error")
+        self.assertIn(message, plan["ai_variant"]["error"])
+        self.assertIsNone(plan["ai_variant"]["build_inputs"])
+
+    def test_ai_tool_release_that_is_not_stable_fails_only_the_ai_variant(self) -> None:
+        cases = ((CODEX_LATEST, {"prerelease": True}, "openai/codex's latest release is not a stable release"),
+                 (CODEX_LATEST, {"tag_name": "rust-v0.173.0-alpha.4"}, "not a stable release"),
+                 (AGY_LATEST, {"draft": True}, "antigravity-cli's latest release is not a stable release"))
+        for url, changes, message in cases:
+            with self.subTest(changes=changes):
+                self.replay()
+                self.edit_release(url, **changes)
+                self.assert_only_the_ai_variant_fails(message)
+
+    def test_ai_tool_asset_without_a_digest_fails_only_the_ai_variant(self) -> None:
+        release = json.loads(self.recorded(AGY_LATEST).read_bytes())
+        assets = [{**asset, "digest": None} if asset["name"] == "agy_cli_linux_arm64_musl.tar.gz" else asset
+                  for asset in release["assets"]]
+        self.edit_release(AGY_LATEST, assets=assets)
+        self.assert_only_the_ai_variant_fails(
+            "agy 1.5.14 has no agy_cli_linux_arm64_musl.tar.gz asset with a sha256 digest")
 
     def test_scheduled_new_nightly_plans_a_build_with_verified_checksums(self) -> None:
         self.lock["yt_dlp"] = PREVIOUS_NIGHTLY
@@ -447,7 +565,8 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(plan["reason"], "no lock file")
         self.assertEqual(plan["change_summary"], "n8n 2.38.7, yt-dlp 2026.09.16.232951, ffmpeg 9.0.1")
         self.assertEqual(plan["new_lock"],
-                         {"n8n": N8N_2_38_7, "yt_dlp": RECORDED_NIGHTLY, "ffmpeg": FFMPEG_9_0_1})
+                         {"n8n": N8N_2_38_7, "yt_dlp": RECORDED_NIGHTLY, "ffmpeg": FFMPEG_9_0_1,
+                          "codex": CODEX_0_171_0, "agy": AGY_1_5_14})
         self.assertEqual(plan["floating_tags"], ["2", "2.38", "2.38.7"])
         self.assertEqual(plan["build_tag"], "2.38.7-20260912-0617")
         self.assertEqual(plan["notices"], [])

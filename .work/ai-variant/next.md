@@ -1,19 +1,25 @@
 ## Facts
 
-- The automated smoke test passed on amd64 (see `done.md`). Binaries are unpacked at
-  `/tmp/claude-1000/-home-dev-projects-n8n-custom-ytdlp/25e08389-100b-4175-8639-8eddec5ae21c/scratchpad/smoke/bin`;
-  that folder may be cleared, and re-downloading takes a minute.
-- **Untested:** a completed sign-in, and whether the credentials land inside `~/.codex` and
-  `~/.gemini` and survive a new container. The user was asked to run a manual sign-in test
-  with two test volumes, `aiv-codex` and `aiv-gemini`. After they report back:
-  - list the file *names* in both volumes (never print their contents);
-  - record the result in `done.md` and the spec's assumptions.
-- If credentials land elsewhere, or the keyring is used, stop: the volume layout in the
-  commitments would need the user's approval to change.
-- Nothing in the repository's build or publishing has changed yet.
+- Route items 1 (smoke test) and 2 (updater and lock) are done; see `done.md` and the journal.
+- `python3 tests/test_updater.py` passes 39 tests offline.
+- The plan is backward compatible. Its custom-image keys are unchanged, and the new
+  `ai_variant` object holds the variant's `build`, `reason`, `change_summary`, `build_tag`,
+  `floating_tags`, `error` and `build_inputs`.
+- If this branch merged as-is, the custom pipeline would keep working and would only start
+  carrying `codex` and `agy` in the lock. Nothing reads `ai_variant` yet.
+- The branch is rebased on `origin/main` (2.48.7). Local `main` had been two months
+  behind; see the knowledge file.
+- arm64 runs of codex and agy are still unverified. CI is the first place they run.
 
 ## Proposal
 
-Once the sign-in test confirms the folders, do route item 2: lock entries and updater
-detection for codex and agy, plus the variant's own published state and build tag. It is
-the foundation that the build and publishing steps rest on.
+Route item 3: the variant's build and its image acceptance tests.
+
+- A Dockerfile target that adds codex and agy on top of the custom image's stage,
+  verifying each against the lock's sha256.
+- The `node`-owned `/home/node/.codex` and `/home/node/.gemini` folders,
+  `AGY_CLI_DISABLE_AUTO_UPDATE`, and the variant's labels.
+- Extending `scripts/build_and_test.py` and `tests/test_image.py` so both images are
+  built and checked on amd64 and arm64 in CI.
+
+This is where the arm64 assumption first gets tested.

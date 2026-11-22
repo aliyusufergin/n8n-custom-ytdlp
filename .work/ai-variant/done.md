@@ -1,3 +1,4 @@
 # Done
 
 - Smoke test (amd64, 2026-11-22): codex 0.171.0 and agy 1.5.14 musl binaries match their GitHub digests and run as `node` in the pinned n8n image. The user signed in once through `docker run -it` (codex device code, agy paste-the-code). A fresh container with only the two volumes kept both sign-ins: codex in `~/.codex/auth.json`, agy in `~/.gemini/antigravity-cli/antigravity-oauth-token` (file, no keyring). arm64 is left to CI (journal).
+- Updater and lock (2026-11-22): `scripts/updater.py` resolves codex and agy from GitHub latest releases (stable tag pattern, not prerelease/draft, per-arch musl asset sha256 from the API digest) into lock keys `codex` and `agy`, and plans the AI variant separately as `plan.ai_variant`; 8 new offline tests, recordings `codex-0.171.0` and `agy-1.5.14`.

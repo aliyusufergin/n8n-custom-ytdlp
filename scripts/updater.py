@@ -39,6 +39,16 @@ YT_DLP_KEY = Path(__file__).with_name("yt-dlp-signing-key.asc")
 YT_DLP_FINGERPRINT = "AC0CBBE6848D6A873464AF4E57CF65933B5A7581"
 # Each build input's lock key, display name and identifying field.
 BUILD_INPUTS = (("n8n", "n8n", "version"), ("yt_dlp", "yt-dlp", "tag"), ("ffmpeg", "ffmpeg", "version"))
+# The AI variant adds these to the custom image's build inputs.
+AI_TOOLS = (("codex", "codex", "version"), ("agy", "agy", "version"))
+AI_VARIANT_INPUTS = BUILD_INPUTS + AI_TOOLS
+# Each AI tool's lock key, GitHub repository, stable tag pattern and per-architecture musl assets.
+AI_TOOL_RELEASES = (
+    ("codex", "openai/codex", rf"rust-v({VERSION})",
+     ("codex-x86_64-unknown-linux-musl.tar.gz", "codex-aarch64-unknown-linux-musl.tar.gz")),
+    ("agy", "google-antigravity/antigravity-cli", rf"({VERSION})",
+     ("agy_cli_linux_x64_musl.tar.gz", "agy_cli_linux_arm64_musl.tar.gz")),
+)
 
 
 class UpstreamError(Exception):
@@ -282,18 +292,51 @@ def resolve_ffmpeg(upstream: Upstream, locked: dict | None) -> dict:
     return {"version": version, "image_digest": digest}
 
 
-def describe_changes(lock: dict | None, new_lock: dict) -> list[str]:
+def resolve_ai_tool(upstream: Upstream, key: str, repository: str, pattern: str,
+                    assets: tuple[str, ...]) -> dict:
+    """Return the lock entry for the stable release that a tool's releases/latest names."""
+    release = json.loads(upstream.get(f"https://api.github.com/repos/{repository}/releases/latest"))
+    tag = release.get("tag_name")
+    # GitHub's latest release is never a draft or prerelease; the checks keep it that way.
+    match = re.fullmatch(pattern, tag) if isinstance(tag, str) else None
+    if match is None or release.get("prerelease") or release.get("draft"):
+        raise UpstreamError(f"{repository}'s latest release is not a stable release: {tag!r}")
+    digests = {asset.get("name"): asset.get("digest") for asset in release.get("assets", [])}
+    sha256 = {}
+    for name in assets:
+        # GitHub computes each asset's digest on upload; it becomes a build argument and a label.
+        digest = digests.get(name)
+        if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise UpstreamError(f"{key} {match[1]} has no {name} asset with a sha256 digest")
+        sha256[name] = digest.removeprefix("sha256:")
+    return {"version": match[1], "sha256": sha256}
+
+
+def describe_changes(lock: dict | None, new_lock: dict, inputs: tuple = BUILD_INPUTS) -> list[str]:
     """Name each changed build input, e.g. "n8n 2.38.7 → 2.38.8"."""
     if lock is None:
-        return [f"{name} {new_lock[key][field]}" for key, name, field in BUILD_INPUTS]
+        return [f"{name} {new_lock[key][field]}" for key, name, field in inputs]
     changes = []
-    for key, name, field in BUILD_INPUTS:
-        before, after = lock[key], new_lock[key]
-        if before[field] != after[field]:
+    for key, name, field in inputs:
+        before, after = lock.get(key), new_lock[key]
+        if before is None:
+            changes.append(f"{name} {after[field]}")
+        elif before[field] != after[field]:
             changes.append(f"{name} {before[field]} → {after[field]}")
         elif before != after:
             changes.append(f"{name} {after[field]} republished")
     return changes
+
+
+def plan_build(changes: list[str], unpublished: bool, trigger: str, version: str) -> tuple:
+    """Return (build, reason, change_summary) for one image."""
+    if unpublished:
+        return True, "no lock file", ", ".join(changes)
+    if changes:
+        return True, "build inputs changed", ", ".join(changes)
+    if trigger in ("manual", "push", "pull_request"):
+        return True, f"{trigger} trigger", f"n8n {version} rebuild"
+    return False, "build inputs unchanged", None
 
 
 def run_time(value: str) -> datetime:
@@ -343,24 +386,55 @@ def main() -> None:
                     "ffmpeg": resolve_ffmpeg(upstream, None if lock is None else lock["ffmpeg"])}
     except UpstreamError as error:
         parser.exit(1, f"{parser.prog}: error: {error}\n")
+    # An AI tool's upstream must never stop the custom image: its error only stops the variant.
+    ai_error = None
+    try:
+        for key, repository, pattern, assets in AI_TOOL_RELEASES:
+            new_lock[key] = resolve_ai_tool(upstream, key, repository, pattern, assets)
+    except (UpstreamError, ValueError) as error:
+        ai_error = str(error)
+        for key, _, _, _ in AI_TOOL_RELEASES:
+            if lock is not None and key in lock:
+                new_lock[key] = lock[key]
+            else:
+                new_lock.pop(key, None)
     version = n8n["version"]
     major, minor, _ = version.split(".")
-    changes = describe_changes(lock, new_lock)
-    if lock is None:
-        build, reason, summary = True, "no lock file", ", ".join(changes)
-    elif changes:
-        build, reason, summary = True, "build inputs changed", ", ".join(changes)
-    elif args.trigger in ("manual", "push", "pull_request"):
-        build, reason, summary = True, f"{args.trigger} trigger", f"n8n {version} rebuild"
+    floating_tags = [major, f"{major}.{minor}", version]
+    build_tag = f"{version}-{now.year:04d}{now.month:02d}{now.day:02d}-{now:%H%M}"
+    build, reason, summary = plan_build(describe_changes(lock, new_lock), lock is None,
+                                        args.trigger, version)
+    # The AI variant compares with the inputs of its own last publish, so a failed or skipped
+    # variant publish is retried even after the custom image published those inputs.
+    published = (lock or {}).get("published_ai_variant")
+    built_from = None if published is None else published["build_inputs"]
+    if ai_error is not None:
+        ai_build, ai_reason, ai_summary = False, "upstream error", None
     else:
-        build, reason, summary = False, "build inputs unchanged", None
+        ai_build, ai_reason, ai_summary = plan_build(
+            describe_changes(built_from, new_lock, AI_VARIANT_INPUTS), built_from is None,
+            args.trigger, version)
+        if built_from is None:
+            ai_reason = "AI variant not published yet"
     print(json.dumps({
         "build": build,
         "reason": reason,
         "change_summary": summary,
         "new_lock": new_lock,
-        "floating_tags": [major, f"{major}.{minor}", version],
-        "build_tag": f"{version}-{now.year:04d}{now.month:02d}{now.day:02d}-{now:%H%M}",
+        "floating_tags": floating_tags,
+        "build_tag": build_tag,
+        "ai_variant": {
+            "build": ai_build,
+            "reason": ai_reason,
+            "change_summary": ai_summary,
+            "floating_tags": floating_tags,
+            "build_tag": build_tag,
+            # The workflow fails the variant's job, and only that job, when this is set.
+            "error": ai_error,
+            # Recorded as published_ai_variant.build_inputs once this build is published.
+            "build_inputs": (None if ai_error is not None
+                             else {key: new_lock[key] for key, _, _ in AI_VARIANT_INPUTS}),
+        },
         # Each notice is {"key", "title", "body"}; scripts/notify.py opens at most one issue per key.
         "notices": notices,
     }))
