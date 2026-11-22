@@ -2,9 +2,7 @@
 
 - The variant is published and verified (see `done.md`). Done-means items 1, 4 and 5 are
   met. The README is on `main`.
-- **Open done-means items:**
-  - 2: the user signs in on their deployment and the sign-in survives a recreated
-    container. Only the user can check this.
+- **Open done-means items:** item 2 is confirmed on the user's deployment (`done.md`).
   - 3: a codex or agy release publishes only the variant. Wait for the next release
     (codex releases every few days), then compare the variant and custom tags and the lock
     commit.
@@ -17,5 +15,5 @@
 
 ## Proposal
 
-Once the user has checked done-means 2, confirm items 3 and 6 from the next publish runs,
+Confirm items 3 and 6 from the next publish runs,
 then run the final independent check and close the work.
