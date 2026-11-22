@@ -2,17 +2,24 @@
 
 Guidance for coding agents working in this repo.
 
-## Agent skills
+## How work is planned and recorded
 
-### Issue tracker
+Work follows the alice-skills flow: `/clarify` → `/survey` (when the approach is open) →
+`/spec` (only the user starts it) → `/step` once per session, `/steer` when the user
+changes the goal or plan. Wait for the user's confirmation at each gate.
 
-Issues and specs are tracked as **GitHub Issues** in this repo, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+- Each piece of work keeps its record in `.work/<name>/`: spec, `next.md` handover,
+  journal, `done.md` and any survey. Read it before continuing that work.
+- `.work/knowledge.md`, when it exists, holds what every piece of work here should know.
+- Decisions are recorded in the work's spec, not as new ADRs. `docs/adr/` holds the
+  project's earlier decisions; read the ones touching your area, and say so explicitly
+  when a change contradicts one.
+- Specs and tasks are not GitHub Issues. GitHub Issues are used only by the publishing
+  workflow for its failure issues and notices (see the README).
 
-### Triage labels
+## Domain language
 
-The five canonical triage roles, each label string equal to its name
-(`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Read `CONTEXT.md` before exploring. When your output names a domain concept (a commit
+message, a test name, a README section), use the term as `CONTEXT.md` defines it and avoid
+the synonyms it lists under _Avoid_. If a needed term is missing, add it to `CONTEXT.md`
+as part of the work.

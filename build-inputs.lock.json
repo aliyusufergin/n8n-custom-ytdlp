@@ -15,6 +15,20 @@
     "version": "9.1",
     "image_digest": "sha256:dd09509d8c2152bfa601c8c20e3dd166bde906d37951b9f7e8bbd922267f5ac9"
   },
+  "codex": {
+    "version": "0.171.0",
+    "sha256": {
+      "codex-x86_64-unknown-linux-musl.tar.gz": "01baa2e47809f8597be5b2f8abd4e4dfe3fb5bcb6e504c2fbaaad97056c15e8d",
+      "codex-aarch64-unknown-linux-musl.tar.gz": "bcf50b836385e51bd2976ab2bbe92b1b08a1cbe37712eb8dbe378aa78d24871c"
+    }
+  },
+  "agy": {
+    "version": "1.5.14",
+    "sha256": {
+      "agy_cli_linux_x64_musl.tar.gz": "3e499f1b33cf28437d0ff90f178628dc6958e5a94c284585d13fd9b446b639f4",
+      "agy_cli_linux_arm64_musl.tar.gz": "d5c664f860e5eedc3486f575d51ecd3a4afaec3e7657b83650108aeb9b692f21"
+    }
+  },
   "published": {
     "build_tag": "2.48.7-20261122-0642",
     "image_digest": "sha256:26e71929cce7980335f0d0ae32598de16b104f9ea53dce55299d8fbab278a6f9"

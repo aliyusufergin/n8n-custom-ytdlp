@@ -16,7 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lock", type=Path, default=ROOT / "build-inputs.lock.json")
-    parser.add_argument("--image", default="n8n-ytdlp:local")
+    parser.add_argument("--variant", choices=("custom", "ai"), default="custom",
+                        help="Build the custom image or the AI variant")
+    parser.add_argument("--image", help="Local tag (default: n8n-ytdlp:local or n8n-ytdlp-ai:local)")
     parser.add_argument("--plan", type=Path, help="Use the publishing plan's lock and build tag")
     parser.add_argument("--archive", type=Path, help="Export an attested OCI archive (requires containerd Docker)")
     parser.add_argument("--youtube-network", choices=("bridge", "none"), default="bridge",
@@ -25,10 +27,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.archive and not args.plan:
         parser.error("--archive requires --plan")
+    if args.image is None:
+        args.image = "n8n-ytdlp-ai:local" if args.variant == "ai" else "n8n-ytdlp:local"
     plan = json.loads(args.plan.read_text()) if args.plan else None
     if plan:
-        if plan["build"] is not True:
-            parser.error("plan does not request a build")
+        if (plan["ai_variant"] if args.variant == "ai" else plan)["build"] is not True:
+            parser.error(f"plan does not request a {args.variant} build")
         args.lock = args.plan.with_name("candidate.lock.json")
         args.lock.write_text(json.dumps(plan["new_lock"], indent=2) + "\n")
     lock = plan["new_lock"] if plan else json.loads(args.lock.read_text())
@@ -38,7 +42,7 @@ def main() -> None:
     if host not in ("linux/amd64", "linux/arm64"):
         parser.error(f"Unsupported Docker host platform: {host}")
     now = datetime.now(timezone.utc)
-    build_tag = plan["build_tag"] if plan else f'{lock["n8n"]["version"]}-{now:%Y%m%d-%H%M}'
+    build_tag = (plan["ai_variant"] if args.variant == "ai" else plan)["build_tag"] if plan else f'{lock["n8n"]["version"]}-{now:%Y%m%d-%H%M}'
     revision = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
     ).strip()
@@ -57,9 +61,18 @@ def main() -> None:
         "REVISION": revision,
         "CREATED": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
     }
+    if args.variant == "ai":
+        for key, (amd64, arm64) in (
+                ("codex", ("codex-x86_64-unknown-linux-musl.tar.gz", "codex-aarch64-unknown-linux-musl.tar.gz")),
+                ("agy", ("agy_cli_linux_x64_musl.tar.gz", "agy_cli_linux_arm64_musl.tar.gz"))):
+            name = key.upper()
+            build_args[f"{name}_VERSION"] = lock[key]["version"]
+            build_args[f"{name}_SHA256_AMD64"] = lock[key]["sha256"][amd64]
+            build_args[f"{name}_SHA256_ARM64"] = lock[key]["sha256"][arm64]
     # BuildKit's cache alone does not make the upstream available to image inspect.
     subprocess.run(["docker", "pull", "--platform", host, build_args["N8N_IMAGE"]], check=True)
-    command = ["docker", "buildx", "build", "--platform", host, "--tag", args.image]
+    target = "ai-variant" if args.variant == "ai" else "custom"
+    command = ["docker", "buildx", "build", "--platform", host, "--target", target, "--tag", args.image]
     if args.archive:
         args.archive.parent.mkdir(parents=True, exist_ok=True)
         scanner = "docker/buildkit-syft-scanner@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
@@ -83,7 +96,7 @@ def main() -> None:
     subprocess.run(
         [sys.executable, str(ROOT / "tests/test_image.py"), args.image,
          str(args.lock.resolve()), "--youtube-network", args.youtube_network,
-         "--build-tag", build_tag,
+         "--build-tag", build_tag, "--variant", args.variant,
          *args.tests], check=True,
     )
     if args.archive:

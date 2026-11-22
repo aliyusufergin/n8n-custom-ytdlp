@@ -1,7 +1,7 @@
 # Recorded upstream responses
 
 Each directory is one recording of one upstream. The tests copy one n8n, one
-yt-dlp and one ffmpeg recording into a single directory for
+yt-dlp, one ffmpeg, one codex and one agy recording into a single directory for
 `scripts/updater.py --replay`. A response file is named by its URL,
 percent-encoded with `urllib.parse.quote(url, safe="")`. Response bodies are
 stored byte for byte as upstream served them.
@@ -33,6 +33,11 @@ headers name the requesting IP.
   whose highest release tag was `9.0.1`, with the `9.0.1` index digest and the
   index itself. The updater fetches an index only when its digest differs from
   the locked one, so this was recorded with `8.1.2` locked.
+
+- `codex-0.171.0`: the `openai/codex` release `rust-v0.171.0` that
+  `releases/latest` named on 2026-11-22, recorded with `--record`.
+- `agy-1.5.14`: the `google-antigravity/antigravity-cli` release `1.5.14` that
+  `releases/latest` named on 2026-11-22, recorded with `--record`.
 
 Record a new snapshot from live upstream, then split its files into one
 directory per upstream. Lock an older ffmpeg digest to record the ffmpeg index
