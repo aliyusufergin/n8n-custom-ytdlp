@@ -41,6 +41,9 @@ class ImageTests(unittest.TestCase):
     def test_n8n_version(self):
         self.assertEqual(self.command("n8n", "--version"), self.lock["n8n"]["version"])
 
+    # Environment the image adds to the upstream n8n image's.
+    added_env: tuple[str, ...] = ()
+
     def test_upstream_contract(self):
         upstream = self.image_config(f'n8nio/n8n@{self.lock["n8n"]["image_digest"]}')
         candidate = self.image_config(self.image)
@@ -48,7 +51,8 @@ class ImageTests(unittest.TestCase):
                       "Volumes", "Healthcheck"):
             with self.subTest(field=field):
                 self.assertEqual(candidate.get(field), upstream.get(field))
-        self.assertEqual(sorted(candidate.get("Env") or []), sorted(upstream.get("Env") or []))
+        self.assertEqual(sorted(candidate.get("Env") or []),
+                         sorted([*(upstream.get("Env") or []), *self.added_env]))
 
     def test_tool_permissions_and_no_extra_runtimes(self):
         self.assertEqual(self.command("id", "-un"), "node")
@@ -306,6 +310,67 @@ class ImageTests(unittest.TestCase):
         self.fail("n8n did not become ready with default settings:\n" + logs.stdout + logs.stderr)
 
 
+class AIVariantTests(ImageTests):
+    """The AI variant passes every custom-image test, plus its own."""
+
+    added_env = ("AGY_CLI_DISABLE_AUTO_UPDATE=true",)
+    # The sign-in folders deployments mount as volumes.
+    state_folders = ("/home/node/.codex", "/home/node/.gemini")
+
+    def test_ai_tool_versions(self):
+        self.assertEqual(self.command("codex", "--version"), f'codex-cli {self.lock["codex"]["version"]}')
+        self.assertEqual(self.command("agy", "--version"), self.lock["agy"]["version"])
+        self.assertIn("Run Codex non-interactively", self.command("codex", "exec", "--help"))
+
+    def test_ai_tool_permissions(self):
+        self.command("sh", "-ec", """
+            for tool in codex agy; do
+                path=$(command -v "$tool")
+                test "$path" = "/usr/local/bin/$tool"
+                test -x "$path"
+                test "$(stat -c '%u:%g' "$path")" = 0:0
+                test ! -w "$path"
+            done
+            test "$(stat -c '%u:%g' /home/node)" = 1000:1000
+        """)
+
+    def test_state_folders_owned_by_node_and_empty(self):
+        for folder in self.state_folders:
+            with self.subTest(folder=folder):
+                self.assertEqual(self.command("stat", "-c", "%u:%g %a", folder), "1000:1000 755")
+                self.assertEqual(self.command("ls", "-A", folder), "")
+
+    def test_state_folders_fresh_volumes_keep_sign_in_state(self):
+        """A fresh named volume takes the folder's node ownership and keeps what node writes."""
+        volumes = {folder: "n8n-ytdlp-ai-test-" + uuid.uuid4().hex for folder in self.state_folders}
+        for volume in volumes.values():
+            self.addCleanup(subprocess.run, ["docker", "volume", "rm", "--force", volume],
+                            check=True, capture_output=True, text=True, timeout=30)
+        mounts = [option for folder, volume in volumes.items()
+                  for option in ("--volume", f"{volume}:{folder}")]
+        for script in ("for d in .codex .gemini; do echo signed-in > ~/$d/token; done",
+                       "for d in .codex .gemini; do test \"$(cat ~/$d/token)\" = signed-in; done"):
+            subprocess.run(["docker", "run", "--rm", "--network", "none", *mounts,
+                            "--entrypoint", "sh", self.image, "-ec", script],
+                           check=True, capture_output=True, text=True, timeout=60)
+
+    def test_build_labels(self):
+        super().test_build_labels()
+        labels = self.image_config(self.image)["Labels"]
+        prefix = "io.github.aliyusufergin.n8n-ytdlp."
+        expected = {
+            "codex.version": self.lock["codex"]["version"],
+            "codex.sha256.amd64": self.lock["codex"]["sha256"]["codex-x86_64-unknown-linux-musl.tar.gz"],
+            "codex.sha256.arm64": self.lock["codex"]["sha256"]["codex-aarch64-unknown-linux-musl.tar.gz"],
+            "agy.version": self.lock["agy"]["version"],
+            "agy.sha256.amd64": self.lock["agy"]["sha256"]["agy_cli_linux_x64_musl.tar.gz"],
+            "agy.sha256.arm64": self.lock["agy"]["sha256"]["agy_cli_linux_arm64_musl.tar.gz"],
+        }
+        for name, value in expected.items():
+            with self.subTest(label=name):
+                self.assertEqual(labels.get(prefix + name), value)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", help="Candidate image already loaded in Docker")
@@ -313,9 +378,14 @@ if __name__ == "__main__":
     parser.add_argument("--build-tag", help="Exact build tag required by a publishing plan")
     parser.add_argument("--youtube-network", choices=("bridge", "none"), default="bridge",
                         help="Use none to reproduce a warning-only YouTube network failure")
+    parser.add_argument("--variant", choices=("custom", "ai"), default="custom",
+                        help="Run the custom image's suite or the AI variant's")
     args, tests = parser.parse_known_args()
     ImageTests.image = args.image
     ImageTests.lock = json.loads(args.lock.read_text())
     ImageTests.youtube_network = args.youtube_network
     ImageTests.expected_build_tag = args.build_tag
-    unittest.main(argv=[__file__, *tests], verbosity=2)
+    suite = AIVariantTests if args.variant == "ai" else ImageTests
+    # Named tests run as given; otherwise only the chosen suite runs.
+    unittest.main(argv=[__file__, *tests], defaultTest=None if tests else suite.__name__,
+                  verbosity=2)

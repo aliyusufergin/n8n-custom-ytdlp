@@ -13,17 +13,23 @@ permissions:
 
 jobs:
   build-and-test:
-    name: Build and test (${{ matrix.arch }})
+    name: Build and test (${{ matrix.variant }}, ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        variant: [custom, ai]
+        arch: [amd64, arm64]
         include:
           - arch: amd64
             runner: ubuntu-24.04
           - arch: arm64
             runner: ubuntu-24.04-arm
+          - variant: custom
+            image: n8n-ytdlp:local
+          - variant: ai
+            image: n8n-ytdlp-ai:local
     defaults:
       run:
         shell: bash
@@ -59,9 +65,15 @@ jobs:
         env:
           BUILDX_NO_DEFAULT_ATTESTATIONS: '1'
           PUBLISH_CANDIDATE: ${{ inputs.publish-candidate }}
+          VARIANT: ${{ matrix.variant }}
         # Explicit bash uses pipefail, so tee cannot hide a build or test failure.
         run: |
-          args=()
+          args=(--variant "$VARIANT")
+          if [ "$PUBLISH_CANDIDATE" = true ] && [ "$VARIANT" = ai ]; then
+            # Publishing the AI variant is not wired yet.
+            echo 'AI variant publishing is not wired yet; skipped.' | tee "$RUNNER_TEMP/build-and-test.log"
+            exit 0
+          fi
           if [ "$PUBLISH_CANDIDATE" = true ]; then
             args+=(--plan "$RUNNER_TEMP/plan/plan.json" --archive "$RUNNER_TEMP/candidate/image.tar")
           fi
@@ -69,8 +81,11 @@ jobs:
 
       - name: Verify YouTube failure is warning-only
         id: youtube-warning
+        if: ${{ !inputs.publish-candidate || matrix.variant == 'custom' }}
         env:
           PUBLISH_CANDIDATE: ${{ inputs.publish-candidate }}
+          IMAGE: ${{ matrix.image }}
+          VARIANT: ${{ matrix.variant }}
         # Exercise a real network failure even if the live YouTube probe succeeded.
         # pipefail checks the suite's exit status; grep checks that it emitted a warning.
         run: |
@@ -78,14 +93,14 @@ jobs:
           if [ "$PUBLISH_CANDIDATE" = true ]; then
             lock="$RUNNER_TEMP/plan/candidate.lock.json"
           fi
-          python3 tests/test_image.py n8n-ytdlp:local "$lock" \
+          python3 tests/test_image.py "$IMAGE" "$lock" --variant "$VARIANT" \
             --youtube-network none ImageTests.test_youtube_download \
             2>&1 | tee "$RUNNER_TEMP/youtube-warning.log" \
             | tee -a "$RUNNER_TEMP/build-and-test.log"
           grep -F 'WARNING: YouTube download failed (non-blocking):' "$RUNNER_TEMP/youtube-warning.log"
 
       - name: Upload the tested OCI archive and identity receipt
-        if: ${{ inputs.publish-candidate }}
+        if: ${{ inputs.publish-candidate && matrix.variant == 'custom' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: candidate-${{ matrix.arch }}
@@ -97,7 +112,7 @@ jobs:
       - name: Report build and test results
         if: ${{ always() && steps.test.outcome != 'skipped' }}
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.variant }}, ${{ matrix.arch }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
           WARNING_OUTCOME: ${{ steps.youtube-warning.outcome }}
         run: |
