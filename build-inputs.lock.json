@@ -1,8 +1,8 @@
 {
   "n8n": {
-    "version": "2.48.8",
-    "image_digest": "sha256:e0df076a41076127d5f765e05acb8ba746bddff86442a92269c0f5a7219a7e4b",
-    "runners_digest": "sha256:ae28d2510cfe84731825e5bf2fcb675f52a612802fd1ed2bb3f5baedeed9883d"
+    "version": "2.49.5",
+    "image_digest": "sha256:c349b24d6e242b4ea14d75e6f1a90c50e348cf4b1c4512b4a0a50219ead6533d",
+    "runners_digest": "sha256:6acde3e86f55a343970affdb897f4f225212a73f9f2d7cac1db3c3cb1c16495f"
   },
   "yt_dlp": {
     "tag": "2026.11.23.232705",
@@ -16,31 +16,31 @@
     "image_digest": "sha256:dd09509d8c2152bfa601c8c20e3dd166bde906d37951b9f7e8bbd922267f5ac9"
   },
   "codex": {
-    "version": "0.171.0",
+    "version": "0.172.0",
     "sha256": {
-      "codex-x86_64-unknown-linux-musl.tar.gz": "01baa2e47809f8597be5b2f8abd4e4dfe3fb5bcb6e504c2fbaaad97056c15e8d",
-      "codex-aarch64-unknown-linux-musl.tar.gz": "bcf50b836385e51bd2976ab2bbe92b1b08a1cbe37712eb8dbe378aa78d24871c"
+      "codex-x86_64-unknown-linux-musl.tar.gz": "a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392",
+      "codex-aarch64-unknown-linux-musl.tar.gz": "0b99526c185a4425fe96a2214fb7b6a6a7f7c1471883b7afbebe97e15e83e79e"
     }
   },
   "agy": {
-    "version": "1.5.15",
+    "version": "1.5.16",
     "sha256": {
-      "agy_cli_linux_x64_musl.tar.gz": "a12514fb33e8835186082a00b60725f6fb15941ba061f0403347b86c4dbd8f46",
-      "agy_cli_linux_arm64_musl.tar.gz": "455d20cc37507058bd9287d47d51aa7e6110351eb717fbf17e19619a7dc9d32e"
+      "agy_cli_linux_x64_musl.tar.gz": "7edd47e18176d0c2ed2e12c57c3fd674b2823df4a46a0c5bfc7130e72431e122",
+      "agy_cli_linux_arm64_musl.tar.gz": "79e2477421b1146ff2e45c4540f19715f20bd61550368508b9072157842560e8"
     }
   },
   "published": {
-    "build_tag": "2.48.8-20261123-2351",
-    "image_digest": "sha256:c227b61e87f929120f5f2daa6cec41c834d036936c9320f16407712f72719149"
+    "build_tag": "2.49.5-20261124-0951",
+    "image_digest": "sha256:aea8186e1142ef68354210c9f03686d62c5a0df031b9ab023e350198774ddb2b"
   },
   "published_ai_variant": {
-    "build_tag": "2.48.8-20261123-2351",
-    "image_digest": "sha256:bb0c5a296b5d1e698d925baa9eb2c8b83f604f60ff703a28a03beea557745e23",
+    "build_tag": "2.49.5-20261124-0951",
+    "image_digest": "sha256:8d9aad672e17105a07c3da6310cedcd43e014adf79fd48a3907e41d3bf0a8739",
     "build_inputs": {
       "n8n": {
-        "version": "2.48.8",
-        "image_digest": "sha256:e0df076a41076127d5f765e05acb8ba746bddff86442a92269c0f5a7219a7e4b",
-        "runners_digest": "sha256:ae28d2510cfe84731825e5bf2fcb675f52a612802fd1ed2bb3f5baedeed9883d"
+        "version": "2.49.5",
+        "image_digest": "sha256:c349b24d6e242b4ea14d75e6f1a90c50e348cf4b1c4512b4a0a50219ead6533d",
+        "runners_digest": "sha256:6acde3e86f55a343970affdb897f4f225212a73f9f2d7cac1db3c3cb1c16495f"
       },
       "yt_dlp": {
         "tag": "2026.11.23.232705",
@@ -54,17 +54,17 @@
         "image_digest": "sha256:dd09509d8c2152bfa601c8c20e3dd166bde906d37951b9f7e8bbd922267f5ac9"
       },
       "codex": {
-        "version": "0.171.0",
+        "version": "0.172.0",
         "sha256": {
-          "codex-x86_64-unknown-linux-musl.tar.gz": "01baa2e47809f8597be5b2f8abd4e4dfe3fb5bcb6e504c2fbaaad97056c15e8d",
-          "codex-aarch64-unknown-linux-musl.tar.gz": "bcf50b836385e51bd2976ab2bbe92b1b08a1cbe37712eb8dbe378aa78d24871c"
+          "codex-x86_64-unknown-linux-musl.tar.gz": "a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392",
+          "codex-aarch64-unknown-linux-musl.tar.gz": "0b99526c185a4425fe96a2214fb7b6a6a7f7c1471883b7afbebe97e15e83e79e"
         }
       },
       "agy": {
-        "version": "1.5.15",
+        "version": "1.5.16",
         "sha256": {
-          "agy_cli_linux_x64_musl.tar.gz": "a12514fb33e8835186082a00b60725f6fb15941ba061f0403347b86c4dbd8f46",
-          "agy_cli_linux_arm64_musl.tar.gz": "455d20cc37507058bd9287d47d51aa7e6110351eb717fbf17e19619a7dc9d32e"
+          "agy_cli_linux_x64_musl.tar.gz": "7edd47e18176d0c2ed2e12c57c3fd674b2823df4a46a0c5bfc7130e72431e122",
+          "agy_cli_linux_arm64_musl.tar.gz": "79e2477421b1146ff2e45c4540f19715f20bd61550368508b9072157842560e8"
         }
       }
     }
