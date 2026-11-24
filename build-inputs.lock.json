@@ -34,8 +34,8 @@
     "image_digest": "sha256:231abc85ef313ae4fa872c1252109b6a29173d0ca4a13f7b243d800397a71e2b"
   },
   "published_ai_variant": {
-    "build_tag": "2.49.5-20261124-0951",
-    "image_digest": "sha256:8d9aad672e17105a07c3da6310cedcd43e014adf79fd48a3907e41d3bf0a8739",
+    "build_tag": "2.49.5-20261124-1603",
+    "image_digest": "sha256:17d0612aa82fbd46af34e8ba7219e1d7eac6568e3bc5434f56360bbda5594061",
     "build_inputs": {
       "n8n": {
         "version": "2.49.5",
