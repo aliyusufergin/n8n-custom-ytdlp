@@ -30,12 +30,12 @@
     }
   },
   "published": {
-    "build_tag": "2.49.5-20261124-1546",
-    "image_digest": "sha256:231abc85ef313ae4fa872c1252109b6a29173d0ca4a13f7b243d800397a71e2b"
+    "build_tag": "2.49.5-20261124-1619",
+    "image_digest": "sha256:b0fbcdad69049d885f17856ff98211af039a4fcadbc5687f7e71762b2ce3b96c"
   },
   "published_ai_variant": {
-    "build_tag": "2.49.5-20261124-1603",
-    "image_digest": "sha256:17d0612aa82fbd46af34e8ba7219e1d7eac6568e3bc5434f56360bbda5594061",
+    "build_tag": "2.49.5-20261124-1619",
+    "image_digest": "sha256:0c68bcf26bb06f97bee692b81a1d2c855e53f9392f627e983075c21869c9ca7d",
     "build_inputs": {
       "n8n": {
         "version": "2.49.5",
