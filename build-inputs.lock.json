@@ -30,8 +30,8 @@
     }
   },
   "published": {
-    "build_tag": "2.49.5-20261124-0951",
-    "image_digest": "sha256:aea8186e1142ef68354210c9f03686d62c5a0df031b9ab023e350198774ddb2b"
+    "build_tag": "2.49.5-20261124-1546",
+    "image_digest": "sha256:231abc85ef313ae4fa872c1252109b6a29173d0ca4a13f7b243d800397a71e2b"
   },
   "published_ai_variant": {
     "build_tag": "2.49.5-20261124-0951",
