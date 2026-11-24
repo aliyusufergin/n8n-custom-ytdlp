@@ -1,14 +1,14 @@
 {
   "n8n": {
-    "version": "2.48.7",
-    "image_digest": "sha256:fabce3e9678a07d2dde83bd8f5124017f3ec457d0a3fc6b63bb4cec465d63861",
-    "runners_digest": "sha256:de677ec691669899234ad6faa1377a7981978c91c3d532d0a16ebc3ad9416bf8"
+    "version": "2.48.8",
+    "image_digest": "sha256:e0df076a41076127d5f765e05acb8ba746bddff86442a92269c0f5a7219a7e4b",
+    "runners_digest": "sha256:ae28d2510cfe84731825e5bf2fcb675f52a612802fd1ed2bb3f5baedeed9883d"
   },
   "yt_dlp": {
-    "tag": "2026.11.22.232654",
+    "tag": "2026.11.23.232705",
     "sha256": {
-      "yt-dlp_musllinux": "4a21f94c1a5ddada14d9e5cabce8e38620cc1e9415325f0deb7dc21ceeb550f6",
-      "yt-dlp_musllinux_aarch64": "b593ad84b7d12b19f936a66089f4f7ad08fa81742898803740bdc22a8ff73097"
+      "yt-dlp_musllinux": "6191c6472cb17673510141a742299b1f37b9bad23297f053a5825b790be73bfb",
+      "yt-dlp_musllinux_aarch64": "3378022aecabf5090a98cf265c7181ae712fe6cf5b29839a2998a7b6771e9e8c"
     }
   },
   "ffmpeg": {
@@ -23,30 +23,30 @@
     }
   },
   "agy": {
-    "version": "1.5.14",
+    "version": "1.5.15",
     "sha256": {
-      "agy_cli_linux_x64_musl.tar.gz": "3e499f1b33cf28437d0ff90f178628dc6958e5a94c284585d13fd9b446b639f4",
-      "agy_cli_linux_arm64_musl.tar.gz": "d5c664f860e5eedc3486f575d51ecd3a4afaec3e7657b83650108aeb9b692f21"
+      "agy_cli_linux_x64_musl.tar.gz": "a12514fb33e8835186082a00b60725f6fb15941ba061f0403347b86c4dbd8f46",
+      "agy_cli_linux_arm64_musl.tar.gz": "455d20cc37507058bd9287d47d51aa7e6110351eb717fbf17e19619a7dc9d32e"
     }
   },
   "published": {
-    "build_tag": "2.48.7-20261123-0732",
-    "image_digest": "sha256:47bc96ce93c38ba3d46e8dbc2498741b38ad4d5ccfb327c099fc4ec3fcadecd8"
+    "build_tag": "2.48.8-20261123-2351",
+    "image_digest": "sha256:c227b61e87f929120f5f2daa6cec41c834d036936c9320f16407712f72719149"
   },
   "published_ai_variant": {
-    "build_tag": "2.48.7-20261122-1111",
-    "image_digest": "sha256:8b0c77b59d3d1c6fdd21f83e39c348f743142732163971832fec6e4559944300",
+    "build_tag": "2.48.8-20261123-2351",
+    "image_digest": "sha256:bb0c5a296b5d1e698d925baa9eb2c8b83f604f60ff703a28a03beea557745e23",
     "build_inputs": {
       "n8n": {
-        "version": "2.48.7",
-        "image_digest": "sha256:fabce3e9678a07d2dde83bd8f5124017f3ec457d0a3fc6b63bb4cec465d63861",
-        "runners_digest": "sha256:de677ec691669899234ad6faa1377a7981978c91c3d532d0a16ebc3ad9416bf8"
+        "version": "2.48.8",
+        "image_digest": "sha256:e0df076a41076127d5f765e05acb8ba746bddff86442a92269c0f5a7219a7e4b",
+        "runners_digest": "sha256:ae28d2510cfe84731825e5bf2fcb675f52a612802fd1ed2bb3f5baedeed9883d"
       },
       "yt_dlp": {
-        "tag": "2026.11.21.232659",
+        "tag": "2026.11.23.232705",
         "sha256": {
-          "yt-dlp_musllinux": "b019cc249c729c3d65a73d3e9d0182f0cef29c09c9b2eff27a2cf17ea4987f2c",
-          "yt-dlp_musllinux_aarch64": "f7dcf64d217c28e2ddc38203f6627c6f72fbce10dcb53799941c06d81807245e"
+          "yt-dlp_musllinux": "6191c6472cb17673510141a742299b1f37b9bad23297f053a5825b790be73bfb",
+          "yt-dlp_musllinux_aarch64": "3378022aecabf5090a98cf265c7181ae712fe6cf5b29839a2998a7b6771e9e8c"
         }
       },
       "ffmpeg": {
@@ -61,10 +61,10 @@
         }
       },
       "agy": {
-        "version": "1.5.14",
+        "version": "1.5.15",
         "sha256": {
-          "agy_cli_linux_x64_musl.tar.gz": "3e499f1b33cf28437d0ff90f178628dc6958e5a94c284585d13fd9b446b639f4",
-          "agy_cli_linux_arm64_musl.tar.gz": "d5c664f860e5eedc3486f575d51ecd3a4afaec3e7657b83650108aeb9b692f21"
+          "agy_cli_linux_x64_musl.tar.gz": "a12514fb33e8835186082a00b60725f6fb15941ba061f0403347b86c4dbd8f46",
+          "agy_cli_linux_arm64_musl.tar.gz": "455d20cc37507058bd9287d47d51aa7e6110351eb717fbf17e19619a7dc9d32e"
         }
       }
     }
