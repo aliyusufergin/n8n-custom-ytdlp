@@ -1,20 +1,19 @@
 ## Facts
 
-- Route items 1–5 are done and pushed to draft PR #30. CI passes on both images and both
-  architectures; publishing itself can only run from `main`.
-- The independent check's six findings are fixed (see `done.md`). The commit-lock
-  scenarios were checked locally; the publish chain has never run on GitHub.
-- **Before or right after the merge, the user needs to:**
-  - make sure `DOCKERHUB_TOKEN` can push to a new repository `aliyusufergin/n8n-ytdlp-ai`,
-    or create that repository first;
-  - add a Docker Hub immutability rule for its build tags, as on the custom image's
-    repository.
-- The merge publishes the custom image once more (accepted, journal) and the variant for
-  the first time.
+- The variant is published and verified (see `done.md`). Done-means items 1, 4 and 5 are
+  met. The README is on `main`.
+- **Open done-means items:** item 2 is confirmed on the user's deployment (`done.md`).
+  - 3: a codex or agy release publishes only the variant. Wait for the next release
+    (codex releases every few days), then compare the variant and custom tags and the lock
+    commit.
+  - 6: a scheduled run with no upstream change publishes nothing. Check the next quiet
+    scheduled run.
+- **Pending user actions:**
+  - deleting the local test volumes `aiv-codex` and `aiv-gemini`, which hold real tokens.
+- This record lives on branch `ai-variant-record`, not on `main`. Pushing `.work/` to
+  `main` would republish both images (journal).
 
 ## Proposal
 
-Milestone: ask the user to merge PR #30 (or approve that I mark it ready and merge). Then
-watch the first publish run, and fix anything in the AI chain. Finally, the user checks
-"Done means" 2 on their deployment: sign in, recreate the container on a newer tag, and run
-both tools from an Execute Command node.
+Confirm items 3 and 6 from the next publish runs,
+then run the final independent check and close the work.

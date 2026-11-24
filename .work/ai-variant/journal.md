@@ -13,3 +13,6 @@
 - 2026-11-22: `build-and-test.yml` takes a `variant` input and is called once per image (`image.yml` and `publish.yml`), so an AI variant failure never fails the custom image's build job. The temporary matrix skip from route 3 is gone.
 - 2026-11-22: The AI variant has no vulnerability scan job. The custom image's report-only scan is unchanged; adding one for the variant is optional.
 - 2026-11-22: After the independent check, `commit_lock.py` exits non-zero when one image's part fails but still commits the other's verified part, so the failure issue opens without losing a publish.
+- 2026-11-22: `.work/` is not in the publish workflow's `paths-ignore`, so any record-only push to `main` publishes both images again. Record updates stay on a branch until the user decides how to fix that.
+- 2026-11-22: The user chose to add `.work/**` to the publish workflow's `paths-ignore` together with the next real change to `main`, not as a separate merge, to avoid one more republish. Until then, record updates stay on branch `ai-variant-record`.
+- 2026-11-22: The existing repositories' Docker Hub tag immutability rule is `^[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}-[0-9]{4}$` (build tags only). `n8n-ytdlp-ai` was created with immutability off; the user sets the same rule in the Docker Hub UI.
