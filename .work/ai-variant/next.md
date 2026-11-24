@@ -1,20 +1,20 @@
 ## Facts
 
-- Route items 1–5 are done and pushed to draft PR #30. CI passes on both images and both
-  architectures; publishing itself can only run from `main`.
-- The independent check's six findings are fixed (see `done.md`). The commit-lock
-  scenarios were checked locally; the publish chain has never run on GitHub.
-- **Before or right after the merge, the user needs to:**
-  - make sure `DOCKERHUB_TOKEN` can push to a new repository `aliyusufergin/n8n-ytdlp-ai`,
-    or create that repository first;
-  - add a Docker Hub immutability rule for its build tags, as on the custom image's
-    repository.
-- The merge publishes the custom image once more (accepted, journal) and the variant for
-  the first time.
+- Done-means 1, 2, 4, 5 and 6 are verified (`done.md`).
+- Done-means 3 is still open. A run where codex or agy changed but n8n, yt-dlp and ffmpeg
+  didn't has not happened yet. So far both tool updates came together with n8n changes
+  (`7f8835e`, `58056c4`), and each of those published both images, as designed.
+  - yt-dlp nightlies land about once a day and runs come every 6 hours, so most runs see no
+    yt-dlp change, and a codex-only run should show up within days.
+  - Check: a lock commit whose message has only an "AI variant" part. The custom image's
+    `published` and its Docker Hub tags must be unchanged by that run.
+- Branch `ai-variant-attestation-retry` adds the retry to `verify-attestation-ai` and
+  carries the work record. Merging it publishes both images once (a workflow change is
+  not Markdown); the user decides when.
+- `.work/` pushes never publish, because every record file is Markdown (journal
+  correction).
 
 ## Proposal
 
-Milestone: ask the user to merge PR #30 (or approve that I mark it ready and merge). Then
-watch the first publish run, and fix anything in the AI chain. Finally, the user checks
-"Done means" 2 on their deployment: sign in, recreate the container on a newer tag, and run
-both tools from an Execute Command node.
+After the user's merge decision, wait for a codex- or agy-only run to confirm done-means
+3. Then run the final independent check and close the work.

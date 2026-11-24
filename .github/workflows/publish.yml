@@ -200,12 +200,21 @@ jobs:
           BUILD_TAG: ${{ needs.publish-ai.outputs.build-tag }}
         run: |
           # The build tag, and the README's own reference, which now points to the same index.
+          # Docker Hub can list a just-pushed attestation only seconds later, so a miss is
+          # retried for up to two minutes before the job fails.
           for reference in "aliyusufergin/n8n-ytdlp-ai:$BUILD_TAG" "aliyusufergin/n8n-ytdlp-ai:2"; do
-            gh attestation verify "oci://docker.io/$reference" \
-              --repo aliyusufergin/n8n-custom-ytdlp \
-              --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
-              --source-ref refs/heads/main \
-              --bundle-from-oci
+            for attempt in 1 2 3 4 5 6 7; do
+              if gh attestation verify "oci://docker.io/$reference" \
+                  --repo aliyusufergin/n8n-custom-ytdlp \
+                  --signer-workflow aliyusufergin/n8n-custom-ytdlp/.github/workflows/publish.yml \
+                  --source-ref refs/heads/main \
+                  --bundle-from-oci; then
+                break
+              fi
+              if [ "$attempt" = 7 ]; then exit 1; fi
+              echo "Attestation of $reference not found yet (attempt $attempt); retrying in 20 s"
+              sleep 20
+            done
           done
           printf 'The attestation of aliyusufergin/n8n-ytdlp-ai:%s verified from Docker Hub.\n' "$BUILD_TAG" \
             >> "$GITHUB_STEP_SUMMARY"
