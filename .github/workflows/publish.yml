@@ -349,7 +349,7 @@ jobs:
   verify-attestation:
     needs: [publish, attest]
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - name: Download the verified published lock
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
@@ -372,7 +372,16 @@ jobs:
               --source-ref refs/heads/main \
               --bundle-from-oci
           }
-          verify "docker.io/aliyusufergin/n8n-ytdlp:$build_tag"
+          # Docker Hub has listed a just-pushed attestation only minutes later (2026-11-24),
+          # so a miss is retried every 30 s for up to 15 minutes.
+          for attempt in $(seq 1 30); do
+            if verify "docker.io/aliyusufergin/n8n-ytdlp:$build_tag"; then
+              break
+            fi
+            if [ "$attempt" = 30 ]; then exit 1; fi
+            echo "Attestation of aliyusufergin/n8n-ytdlp:$build_tag not found yet (attempt $attempt); retrying in 30 s"
+            sleep 30
+          done
           # The upstream n8n image cannot carry this workflow's attestation, so a pass means
           # the command verifies nothing. The summary shows why it was rejected.
           if rejection=$(verify "docker.io/n8nio/n8n@$upstream" 2>&1); then
