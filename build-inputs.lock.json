@@ -1,8 +1,8 @@
 {
   "n8n": {
-    "version": "2.49.6",
-    "image_digest": "sha256:a1a9955a4a9e5dd9fa65a62f59e0751351b45b9e5cd2c17e6e330a8d0026cad8",
-    "runners_digest": "sha256:dde28472eab4e118119d44bedad2561ab40fad6a208bbaeec664f3caad8b2bc8"
+    "version": "2.49.7",
+    "image_digest": "sha256:17a3e5a8c5e2a7440cc757f5392d57b50eefdfd46eac4532a7dea9bf2735d9ae",
+    "runners_digest": "sha256:be8031ab2badedb7af0ceb68ea46ac5317bb941c06f97b3f0e9bc3bc2b67050e"
   },
   "yt_dlp": {
     "tag": "2026.11.24.232653",
@@ -23,24 +23,24 @@
     }
   },
   "agy": {
-    "version": "1.5.17",
+    "version": "1.5.18",
     "sha256": {
-      "agy_cli_linux_x64_musl.tar.gz": "117cd494ab91b15536ce790ac11f424eb7232e03212a61a2bfa554a36dbbe13b",
-      "agy_cli_linux_arm64_musl.tar.gz": "1272198c8e51aa2a570657735fc9a76a5c30fd32f31a401cf722cfa1af5547dd"
+      "agy_cli_linux_x64_musl.tar.gz": "1b62ab65643696bedd58a7bf522b402aed361477c8c3327d1cb6faf747835a74",
+      "agy_cli_linux_arm64_musl.tar.gz": "e423fd2ae8bfddee31d0c06e0ecc45b3e7fd0f8a4f0c97278ead1a00678882e0"
     }
   },
   "published": {
-    "build_tag": "2.49.6-20261125-0828",
-    "image_digest": "sha256:a315bfc5c3bf5d281f5217f8046544e3c5f1fe1dd314936fe952ec048ef51031"
+    "build_tag": "2.49.7-20261126-0812",
+    "image_digest": "sha256:3e57a6bac16b00bfd1ea1defb913f1c5bfbb29049aa94f2258b2ee00b7978421"
   },
   "published_ai_variant": {
-    "build_tag": "2.49.6-20261125-0828",
-    "image_digest": "sha256:cc7aed5f4f45bd6c0d943d19c14902eaeecde4a17bb178910018151b50fcafe1",
+    "build_tag": "2.49.7-20261126-0812",
+    "image_digest": "sha256:7d1ab8e862b479e4a776cdbdda2f4b1d0ed44016af12965b9cb2940ea09552bc",
     "build_inputs": {
       "n8n": {
-        "version": "2.49.6",
-        "image_digest": "sha256:a1a9955a4a9e5dd9fa65a62f59e0751351b45b9e5cd2c17e6e330a8d0026cad8",
-        "runners_digest": "sha256:dde28472eab4e118119d44bedad2561ab40fad6a208bbaeec664f3caad8b2bc8"
+        "version": "2.49.7",
+        "image_digest": "sha256:17a3e5a8c5e2a7440cc757f5392d57b50eefdfd46eac4532a7dea9bf2735d9ae",
+        "runners_digest": "sha256:be8031ab2badedb7af0ceb68ea46ac5317bb941c06f97b3f0e9bc3bc2b67050e"
       },
       "yt_dlp": {
         "tag": "2026.11.24.232653",
@@ -61,10 +61,10 @@
         }
       },
       "agy": {
-        "version": "1.5.17",
+        "version": "1.5.18",
         "sha256": {
-          "agy_cli_linux_x64_musl.tar.gz": "117cd494ab91b15536ce790ac11f424eb7232e03212a61a2bfa554a36dbbe13b",
-          "agy_cli_linux_arm64_musl.tar.gz": "1272198c8e51aa2a570657735fc9a76a5c30fd32f31a401cf722cfa1af5547dd"
+          "agy_cli_linux_x64_musl.tar.gz": "1b62ab65643696bedd58a7bf522b402aed361477c8c3327d1cb6faf747835a74",
+          "agy_cli_linux_arm64_musl.tar.gz": "e423fd2ae8bfddee31d0c06e0ecc45b3e7fd0f8a4f0c97278ead1a00678882e0"
         }
       }
     }
